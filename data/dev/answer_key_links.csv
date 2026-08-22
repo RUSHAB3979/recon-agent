@@ -1,0 +1,459 @@
+link_id,scenario,expected_resolution,txn_ids,utrs,n_txns,n_credits,amount_basis,expected_inr_total,actual_inr_total,notes
+L00001,clean_1to1,auto_match,pay_vwSDrtqohUmuhV,ICICN71094777520,1,1,net,2357.78,2357.78,
+L00002,many_to_one,auto_match,pay_XHyC6Ct3LBtKNd|pay_SMEscosTsS3DeR|pay_edkYtMV0K6sChD,HDFCN75655125674,3,1,net,16473.42,16473.42,batch settlement of 3 txns; narration carries no per-txn reference
+L00003,fee_deduction,auto_match,pay_WFOCWdnrJi7sC4,ICICN63982146584,1,1,gross,1344.00,1344.00,
+L00004,clean_1to1,auto_match,pay_mSpKyo2XAcuVET,HDFCN58657809134,1,1,net,2549.00,2549.00,
+L00005,clean_1to1,auto_match,pay_xBjpHAKRYlklfN,KKBKN71369594406,1,1,net,3999.00,3999.00,
+L00006,clean_1to1,auto_match,pay_RWUXQR1iOg5OPc,ICICN68516048175,1,1,net,1499.00,1499.00,
+L00007,date_offset,auto_match,pay_O0D6StPAhic8ct,UTIBN15850643171,1,1,net,243.12,243.12,settlement lag T+3
+L00008,missing_on_gateway,exception:unexplained_credit,,YESBN50240268117,0,1,,,3138.72,credit with no gateway counterpart; true exception
+L00009,clean_1to1,auto_match,pay_bdE2zBRgFT6Ce5,KKBKN15654527111,1,1,net,1813.50,1813.50,
+L00010,clean_1to1,auto_match,pay_3Q8WB36Ud9sMtw,HDFCN22961201836,1,1,net,3999.00,3999.00,
+L00011,clean_1to1,auto_match,pay_RfrCQBFMCArnWG,YESBN38851606071,1,1,net,194.30,194.30,
+L00012,clean_1to1,auto_match,pay_1S6xfB2gpBLzHf,KKBKN99799552717,1,1,net,19291.04,19291.04,
+L00013,clean_1to1,auto_match,pay_eP32fNMGyDLJ9Y,UTIBN66590515186,1,1,net,1999.00,1999.00,
+L00014,garbled_narration,auto_match,pay_tJyPYv0iQS18VR,HDFCN65379473834,1,1,net,3065.20,3065.20,narration garbled; reference recoverable
+L00015,clean_1to1,auto_match,pay_ZMi3qdPE3xJ7gT,UTIBN15220472779,1,1,net,799.00,799.00,
+L00016,missing_on_bank,exception:unsettled,pay_hdpAOYNDeh15FM,,1,0,net,2499.00,,captured but never settled; true exception
+L00017,rounding,auto_match,pay_y3EcOyxqVbwYew,UTIBN86874034505,1,1,net,4947.00,4946.99,rounding delta -0.01
+L00018,clean_1to1,auto_match,pay_ZfUBfBM0lIsugf,ICICN55690927557,1,1,net,1756.54,1756.54,
+L00019,duplicate_settlement,exception:duplicate_settlement,pay_6JhqXqTCnNsS6F,HDFCN58957829114|ICICN42253584143,1,2,net,5999.00,11998.00,settled twice; agent must link both credits AND flag the overpayment
+L00020,clean_1to1,auto_match,pay_17Kc03bfc8PXKq,ICICN55562588153,1,1,net,3416.42,3416.42,
+L00021,clean_1to1,auto_match,pay_0u7KUumWkFGDF4,HDFCN98358416878,1,1,net,586.63,586.63,
+L00022,date_offset,auto_match,pay_zGccciTvZEHDjM,KKBKN49930972896,1,1,net,48966.52,48966.52,settlement lag T+3
+L00023,clean_1to1,auto_match,pay_32VUdTiHnJuQEH,KKBKN58441986652,1,1,net,3987.38,3987.38,
+L00024,garbled_narration,auto_match,pay_igNVLppdQ5HoOo,HDFCN67240049915,1,1,net,1761.85,1761.85,narration garbled; reference destroyed
+L00025,many_to_one,auto_match,pay_YsKRWmlN2O5z0B|pay_tLUKaqPxSpdQhD|pay_EjDVMxASJ6EWIZ|pay_KIjku2HChRnTLF|pay_LecBwSeId75e7E|pay_IiP3whlIzHiUo1|pay_cZQANX744bpneg,YESBN26870568566,7,1,net,15717.76,15717.76,batch settlement of 7 txns; narration carries no per-txn reference
+L00026,clean_1to1,auto_match,pay_iypqnvPf7C2xfI,ICICN85467854458,1,1,net,4754.75,4754.75,
+L00027,clean_1to1,auto_match,pay_bqJ7LLUAsjmvoy,KKBKN23120387509,1,1,net,487.22,487.22,
+L00028,clean_1to1,auto_match,pay_bG0SRBZ86lg6gH,HDFCN76591803397,1,1,net,1951.82,1951.82,
+L00029,clean_1to1,auto_match,pay_etkKpK12yR5Ivy,YESBN61943114262,1,1,net,35759.65,35759.65,
+L00030,rounding,auto_match,pay_AgbfwJfMMYu3ya,ICICN79937124065,1,1,net,49999.00,49999.01,rounding delta +0.01
+L00031,date_offset,auto_match,pay_9usVSOF9KYpuyr,KKBKN97968868058,1,1,net,7810.22,7810.22,settlement lag T+2
+L00032,fee_deduction,auto_match,pay_gqoGVHJLSKoCxz,HDFCN40105123828,1,1,gross_minus_fee,47.53,47.53,
+L00033,missing_on_gateway,exception:unexplained_credit,,UTIBN78596969155,0,1,,,799.00,credit with no gateway counterpart; true exception
+L00034,clean_1to1,auto_match,pay_SjGyAMiKyBlFOI,HDFCN90340438427,1,1,net,4999.00,4999.00,
+L00035,clean_1to1,auto_match,pay_BgV1PWpt3cCqw3,UTIBN94812604223,1,1,net,24274.28,24274.28,
+L00036,many_to_one,auto_match,pay_D8FuLa3X2UfUDO|pay_K2FYv5RWdcgOY1|pay_fPxqfxQ5PkdzOt|pay_Sv0h3BSiEeoyfU|pay_UnOVj6ANRC3nf5|pay_Sb22Q4tnHMGmVz|pay_31KAxIRlWE9Xeb,KKBKN30316179904,7,1,net,378680.10,378680.10,batch settlement of 7 txns; narration carries no per-txn reference
+L00037,clean_1to1,auto_match,pay_rU4hX5bvZBrHeq,HDFCN86353654195,1,1,net,104.91,104.91,
+L00038,clean_1to1,auto_match,pay_xmsKYtVNpDxLFX,UTIBN10386571918,1,1,net,869.66,869.66,
+L00039,partial_refund,auto_match,pay_S1VuuCroe8miXX,HDFCN44206788317,1,1,net,6139.20,6139.20,partial refund of 1859.80 deducted before settlement
+L00040,duplicate_settlement,exception:duplicate_settlement,pay_ebem5PCZif521Z,KKBKN87014626383|YESBN32133480396,1,2,net,306.34,612.68,settled twice; agent must link both credits AND flag the overpayment
+L00041,clean_1to1,auto_match,pay_4FItlFcfdoMobH,ICICN67528953926,1,1,net,1315.26,1315.26,
+L00042,clean_1to1,auto_match,pay_7FjvVepwukO49f,KKBKN93271040541,1,1,net,124308.41,124308.41,
+L00043,clean_1to1,auto_match,pay_M4BkdgvnmASJU7,UTIBN67741862565,1,1,net,2354.55,2354.55,
+L00044,clean_1to1,auto_match,pay_IAWLoJd1y0HA9I,KKBKN32945116868,1,1,net,885.00,885.00,
+L00045,clean_1to1,auto_match,pay_7gKXgYs3I4w4Aq,ICICN47546913736,1,1,net,349.00,349.00,
+L00046,clean_1to1,auto_match,pay_1m1dpcDd6xTmrx,ICICN46800722903,1,1,net,6302.00,6302.00,
+L00047,date_offset,auto_match,pay_Q911xJPMMstRgE,YESBN93538758428,1,1,net,3130.00,3130.00,settlement lag T+4
+L00048,clean_1to1,auto_match,pay_AY4vxqLsD2hEd3,UTIBN00743292712,1,1,net,2499.00,2499.00,
+L00049,rounding,auto_match,pay_aOUpoS4wtigyGL,HDFCN50648909010,1,1,net,28214.05,28214.03,rounding delta -0.02
+L00050,clean_1to1,auto_match,pay_HrNMSiA15gGUNh,YESBN11437447012,1,1,net,239.00,239.00,
+L00051,clean_1to1,auto_match,pay_5C9Nr4Ufx0vlhz,HDFCN27716701450,1,1,net,3904.62,3904.62,
+L00052,clean_1to1,auto_match,pay_QRPyj10J5NdaP7,KKBKN01660880199,1,1,net,3904.62,3904.62,
+L00053,clean_1to1,auto_match,pay_ChgWQoavw1O9Zs,KKBKN98270808697,1,1,net,3724.00,3724.00,
+L00054,clean_1to1,auto_match,pay_rz9vsCZiiAMS4V,YESBN46081062003,1,1,net,1170.70,1170.70,
+L00055,clean_1to1,auto_match,pay_oVPJypGYYZSsSQ,YESBN16064842294,1,1,net,3539.00,3539.00,
+L00056,clean_1to1,auto_match,pay_eYTuHo9lHeYGkA,UTIBN84085887704,1,1,net,3916.42,3916.42,
+L00057,many_to_one,auto_match,pay_VXBP08eVRjbDTv|pay_byRhIaPUNeWVLc|pay_zYZ2Is9OjtR469|pay_5UwnA5P2GjkloN|pay_qgmULF8vwiQPpg|pay_YoTVPBr1xiRUv4,UTIBN63942788165,6,1,net,265950.29,265950.29,batch settlement of 6 txns; narration carries no per-txn reference
+L00058,clean_1to1,auto_match,pay_8wcoWFoeqxocQn,ICICN86557790827,1,1,net,11305.70,11305.70,
+L00059,clean_1to1,auto_match,pay_hEREEnLkP1Abpc,YESBN29842579913,1,1,net,2309.19,2309.19,
+L00060,clean_1to1,auto_match,pay_4YIGWhfEQi5MI0,KKBKN43009818063,1,1,net,145.48,145.48,
+L00061,clean_1to1,auto_match,pay_RzWnAJYJElxJJE,KKBKN96114351906,1,1,net,1799.00,1799.00,
+L00062,clean_1to1,auto_match,pay_MGHSoNkRcxpPak,ICICN68181845184,1,1,net,17870.00,17870.00,
+L00063,clean_1to1,auto_match,pay_yOYoRSoZuA9wHI,YESBN52111790807,1,1,net,26058.16,26058.16,
+L00064,missing_on_bank,exception:unsettled,pay_8IcGwz3RXlDhSH,,1,0,net,286.00,,captured but never settled; true exception
+L00065,clean_1to1,auto_match,pay_nASWxx2zrClKiK,HDFCN20347175455,1,1,net,2146.00,2146.00,
+L00066,clean_1to1,auto_match,pay_uRGFXVC4fyNsDO,ICICN20234132611,1,1,net,4791.19,4791.19,
+L00067,fee_deduction,auto_match,pay_COiiH1kbcQw36u,KKBKN42400825478,1,1,gross,1532.10,1532.10,
+L00068,clean_1to1,auto_match,pay_zpkTVPy1yoqfBO,ICICN08021442703,1,1,net,12692.22,12692.22,
+L00069,clean_1to1,auto_match,pay_drXzeIElm51q0y,HDFCN31365024916,1,1,net,4194.57,4194.57,
+L00070,clean_1to1,auto_match,pay_7WOddwPjSIYgiF,KKBKN49821827448,1,1,net,3499.00,3499.00,
+L00071,clean_1to1,auto_match,pay_HRFXJjNsuAPuhg,HDFCN70586509480,1,1,net,2925.00,2925.00,
+L00072,clean_1to1,auto_match,pay_VJAVgXOKwRDSQB,KKBKN60049082404,1,1,net,331.00,331.00,
+L00073,missing_on_bank,exception:unsettled,pay_jiqx4LpoqZtfKz,,1,0,net,3999.00,,captured but never settled; true exception
+L00074,clean_1to1,auto_match,pay_Xd6Xvw40BA73h3,KKBKN46225179086,1,1,net,413.00,413.00,
+L00075,clean_1to1,auto_match,pay_pperXBuR7KfhQA,HDFCN47705383388,1,1,net,319.48,319.48,
+L00076,garbled_narration,auto_match,pay_YSNrdDP8aeyQrQ,KKBKN62055543840,1,1,net,799.00,799.00,narration garbled; reference recoverable
+L00077,clean_1to1,auto_match,pay_ApKjBt6MvCIinP,KKBKN47423122099,1,1,net,999.00,999.00,
+L00078,clean_1to1,auto_match,pay_Pxl2yFEikmocAW,YESBN08177038860,1,1,net,430.00,430.00,
+L00079,clean_1to1,auto_match,pay_SH5jD1PCfUGhlX,YESBN60259222206,1,1,net,194.30,194.30,
+L00080,fee_deduction,auto_match,pay_FpnLQEDACfMMap,YESBN82795014556,1,1,gross_minus_fee,4050.88,4050.88,
+L00081,partial_refund,auto_match,pay_UOHfEUSM7YTsBM,UTIBN58303441448,1,1,net,2559.10,2559.10,partial refund of 618.11 deducted before settlement
+L00082,clean_1to1,auto_match,pay_7RE6EZcPiEjOD5,ICICN99629145046,1,1,net,3426.75,3426.75,
+L00083,clean_1to1,auto_match,pay_bZE5Gjmv7EU3Ht,YESBN43533448571,1,1,net,46100.00,46100.00,
+L00084,clean_1to1,auto_match,pay_rj8TZsKpketN5v,HDFCN74773329456,1,1,net,2999.00,2999.00,
+L00085,clean_1to1,auto_match,pay_Ggz0TYguJPeYtI,YESBN17246191965,1,1,net,201.14,201.14,
+L00086,missing_on_gateway,exception:unexplained_credit,,YESBN00851403696,0,1,,,3100.00,credit with no gateway counterpart; true exception
+L00087,clean_1to1,auto_match,pay_1Ajs3QiiaePbjU,YESBN73846895009,1,1,net,4999.00,4999.00,
+L00088,clean_1to1,auto_match,pay_Q9QeROIZLtNd5v,UTIBN71281442944,1,1,net,1565.70,1565.70,
+L00089,duplicate_settlement,exception:duplicate_settlement,pay_vf9jM70j1FWAXy,KKBKN65801856945|UTIBN34430091093,1,2,net,4097.17,8194.34,settled twice; agent must link both credits AND flag the overpayment
+L00090,not_settleable,no_action,pay_rXBS5QXXuqkXer,,1,0,,,,"status=failed; never settleable, must NOT be reported as an exception"
+L00091,clean_1to1,auto_match,pay_nNPg6CTqgceeKU,HDFCN98554601585,1,1,net,12692.22,12692.22,
+L00092,clean_1to1,auto_match,pay_OCVmicmbULpFye,HDFCN79032020417,1,1,net,2066.06,2066.06,
+L00093,clean_1to1,auto_match,pay_Z1VRzuhRKIiu19,ICICN19467232487,1,1,net,3499.00,3499.00,
+L00094,clean_1to1,auto_match,pay_hHgNx3WIGoDXOQ,ICICN07811379956,1,1,net,507.73,507.73,
+L00095,duplicate_settlement,exception:duplicate_settlement,pay_LFd4Bjn7NDlyxi,YESBN73977406335|KKBKN32543107427,1,2,net,24999.00,49998.00,settled twice; agent must link both credits AND flag the overpayment
+L00096,clean_1to1,auto_match,pay_y5SvHcsBWrS8NI,UTIBN38179335548,1,1,net,243.12,243.12,
+L00097,clean_1to1,auto_match,pay_CNxZR8SZ84em54,HDFCN03856955798,1,1,net,4127.18,4127.18,
+L00098,many_to_one,auto_match,pay_sll1TS5QYjkphc|pay_7FXj8D7ujaVIGv|pay_tbzN1oCwfudMPm|pay_uMMG8d6QxzjT2B|pay_BU5Ai1LMfjntE3|pay_ysJFc00t1LtFJV,HDFCN42902572520,6,1,net,52752.37,52752.37,batch settlement of 6 txns; narration carries no per-txn reference
+L00099,clean_1to1,auto_match,pay_u3u02RZtrRSSxg,HDFCN75452798524,1,1,net,31944.00,31944.00,
+L00100,missing_on_bank,exception:unsettled,pay_ebXEWBcmgcYQGL,,1,0,net,384.88,,captured but never settled; true exception
+L00101,fx_settlement,auto_match,pay_j2V8r8Lwwk2GXU,KKBKN38361517182,1,1,net,295.64,295.64,fx EUR->INR @ 92.97
+L00102,clean_1to1,auto_match,pay_JAs2Bm2e51ZE8R,UTIBN99465796784,1,1,net,4892.00,4892.00,
+L00103,missing_on_bank,exception:unsettled,pay_FRblyMRujtNNgW,,1,0,net,249.00,,captured but never settled; true exception
+L00104,clean_1to1,auto_match,pay_6hyCu2yCDcclJQ,KKBKN95450090255,1,1,net,59798.13,59798.13,
+L00105,garbled_narration,auto_match,pay_PtLf6Se3thvkbI,KKBKN37183440496,1,1,net,1199.00,1199.00,narration garbled; reference recoverable
+L00106,clean_1to1,auto_match,pay_tGZtBQIumAzqNG,UTIBN66513644249,1,1,net,399.61,399.61,
+L00107,missing_on_bank,exception:unsettled,pay_ribqYZrQJlP2c9,,1,0,net,4467.03,,captured but never settled; true exception
+L00108,clean_1to1,auto_match,pay_phKVG7hHQ1L8X7,UTIBN15867342575,1,1,net,438.40,438.40,
+L00109,many_to_one,auto_match,pay_ya69z76qtf70Wp|pay_1vTB460g0kSqGe|pay_uKfhkpHTX1PWi2|pay_Axlz4y814Kob8b|pay_KhaTHBX67D0RFh|pay_URmAlAYjbsqpNC|pay_VMqegJddv7pE6w,HDFCN50274564494,7,1,net,241080.23,241080.23,batch settlement of 7 txns; narration carries no per-txn reference
+L00110,clean_1to1,auto_match,pay_cEqkTDBh57FcCw,KKBKN15041659152,1,1,net,699.00,699.00,
+L00111,clean_1to1,auto_match,pay_9ZKin3dZPsuZdV,UTIBN83776749961,1,1,net,3702.46,3702.46,
+L00112,clean_1to1,auto_match,pay_HOPHfsDBf6ZEtj,ICICN26016459779,1,1,net,3579.98,3579.98,
+L00113,rounding,auto_match,pay_PEDSz3Q9VMUFtN,KKBKN60122777079,1,1,net,599.00,599.05,rounding delta +0.05
+L00114,clean_1to1,auto_match,pay_scFzFGLUN7R503,YESBN59724665729,1,1,net,30685.86,30685.86,
+L00115,clean_1to1,auto_match,pay_tpnJdbw4qwRkl0,YESBN18081213524,1,1,net,29999.00,29999.00,
+L00116,rounding,auto_match,pay_vsGkfrxTWAxOQp,KKBKN02908466845,1,1,net,24482.77,24482.73,rounding delta -0.04
+L00117,missing_on_gateway,exception:unexplained_credit,,UTIBN85200894346,0,1,,,2489.00,credit with no gateway counterpart; true exception
+L00118,garbled_narration,auto_match,pay_VLKT58OQI2Mowt,UTIBN97677622827,1,1,net,202.00,202.00,narration garbled; reference recoverable
+L00119,clean_1to1,auto_match,pay_M2AhhxKscHjhxt,UTIBN67922877725,1,1,net,389.58,389.58,
+L00120,rounding,auto_match,pay_TtJPhPJfm9NIKW,KKBKN26085641118,1,1,net,3001.43,3001.39,rounding delta -0.04
+L00121,clean_1to1,auto_match,pay_gujA5uqy805hdm,YESBN67183258238,1,1,net,370.00,370.00,
+L00122,fee_deduction,auto_match,pay_w1OnL1GsckVIKe,YESBN70026876811,1,1,gross,4277.00,4277.00,
+L00123,clean_1to1,auto_match,pay_mCaoVbWrR6Twmf,HDFCN92124938430,1,1,net,91732.78,91732.78,
+L00124,clean_1to1,auto_match,pay_RHDFxHWc4Uodr6,ICICN17350583199,1,1,net,390.76,390.76,
+L00125,clean_1to1,auto_match,pay_dtNOBegRdJds2y,YESBN39284567972,1,1,net,7606.26,7606.26,
+L00126,clean_1to1,auto_match,pay_vsxaHLQRjdpG01,KKBKN30337933756,1,1,net,11633.00,11633.00,
+L00127,clean_1to1,auto_match,pay_OL6Wxcbmmslo4q,HDFCN22338655963,1,1,net,799.00,799.00,
+L00128,fee_deduction,auto_match,pay_fYEYQNekGyW4PW,ICICN54812147853,1,1,gross_minus_fee,352841.16,352841.16,
+L00129,clean_1to1,auto_match,pay_oqPew5fs1GGIPf,HDFCN78263337389,1,1,net,2220.00,2220.00,
+L00130,clean_1to1,auto_match,pay_t8VaFZQ1wvoABR,UTIBN97412182097,1,1,net,112.53,112.53,
+L00131,clean_1to1,auto_match,pay_ku36AzkhiIAEVe,UTIBN97779014754,1,1,net,49.00,49.00,
+L00132,clean_1to1,auto_match,pay_zS8cp43kr4OIsQ,KKBKN36004125777,1,1,net,340.76,340.76,
+L00133,clean_1to1,auto_match,pay_keQWaRrjCwlnTc,KKBKN00531312206,1,1,net,103.69,103.69,
+L00134,clean_1to1,auto_match,pay_gwulazPuaynDoe,HDFCN99768389030,1,1,net,877.78,877.78,
+L00135,duplicate_settlement,exception:duplicate_settlement,pay_ynPcp7UM8CV4vi,HDFCN30232129833|KKBKN76896270661,1,2,net,499.00,998.00,settled twice; agent must link both credits AND flag the overpayment
+L00136,clean_1to1,auto_match,pay_eviTEmj6maa3GU,KKBKN33705024972,1,1,net,24999.00,24999.00,
+L00137,clean_1to1,auto_match,pay_k1BqStG9IQ4yLt,ICICN25223728179,1,1,net,448.64,448.64,
+L00138,rounding,auto_match,pay_revbLpEFRWgadr,UTIBN51076209184,1,1,net,399.00,399.01,rounding delta +0.01
+L00139,clean_1to1,auto_match,pay_ZVuRCoMFzVNYfw,YESBN33321160256,1,1,net,149.00,149.00,
+L00140,clean_1to1,auto_match,pay_y6TVVUyPPYJ92B,YESBN99316087524,1,1,net,31369.14,31369.14,
+L00141,many_to_one,auto_match,pay_ydZvj0Tn2U7ZoS|pay_wWzzeHUssS7mS2,UTIBN72018596263,2,1,net,51041.46,51041.46,batch settlement of 2 txns; narration carries no per-txn reference
+L00142,clean_1to1,auto_match,pay_xahhfhFPQ6GobL,YESBN81312920875,1,1,net,1702.57,1702.57,
+L00143,clean_1to1,auto_match,pay_x9IkB8Qaptc88H,UTIBN42961844626,1,1,net,2499.00,2499.00,
+L00144,clean_1to1,auto_match,pay_0juYByb9MperhI,UTIBN84910256258,1,1,net,2734.90,2734.90,
+L00145,not_settleable,no_action,pay_xTXpRMATDlCwZD,,1,0,,,,"status=failed; never settleable, must NOT be reported as an exception"
+L00146,clean_1to1,auto_match,pay_eUp8fkKdfVsJ7F,YESBN72832152850,1,1,net,299.00,299.00,
+L00147,clean_1to1,auto_match,pay_zn7t779PG05c7D,ICICN43765456284,1,1,net,51.01,51.01,
+L00148,clean_1to1,auto_match,pay_zAVv5ckQm8E9Qr,KKBKN90674471639,1,1,net,449.00,449.00,
+L00149,clean_1to1,auto_match,pay_m2LOOjohizcrm7,HDFCN20005347491,1,1,net,369.78,369.78,
+L00150,missing_on_bank,exception:unsettled,pay_VXLHMxpPrnLyf4,,1,0,net,207.24,,captured but never settled; true exception
+L00151,duplicate_settlement,exception:duplicate_settlement,pay_WmIUjcimAJTq54,HDFCN27868669432|ICICN42403381059,1,2,net,1856.00,3712.00,settled twice; agent must link both credits AND flag the overpayment
+L00152,duplicate_settlement,exception:duplicate_settlement,pay_rlqbIQ3X8XLgUV,ICICN97240422693|ICICN90018513279,1,2,net,202.54,405.08,settled twice; agent must link both credits AND flag the overpayment
+L00153,clean_1to1,auto_match,pay_gIsgG41Aja6obo,KKBKN85926249451,1,1,net,145.48,145.48,
+L00154,fx_settlement,auto_match,pay_B9UrjfuilXywuF,ICICN50305872105,1,1,net,330902.80,330902.80,fx AED->INR @ 23.50
+L00155,clean_1to1,auto_match,pay_yUbS9BxdSgQLeE,YESBN28206678498,1,1,net,499.00,499.00,
+L00156,clean_1to1,auto_match,pay_l0VJM1e0SDEuPP,ICICN03419909700,1,1,net,7999.00,7999.00,
+L00157,clean_1to1,auto_match,pay_A5VGgGZXjbLYyE,KKBKN06339912971,1,1,net,289818.06,289818.06,
+L00158,clean_1to1,auto_match,pay_KxwfelTXDqEqW4,YESBN02146296136,1,1,net,1756.54,1756.54,
+L00159,clean_1to1,auto_match,pay_veuvMFnSVEhrDc,KKBKN68342016542,1,1,net,38635.17,38635.17,
+L00160,clean_1to1,auto_match,pay_eUQLNjuQ08UV0V,ICICN53390550448,1,1,net,799.00,799.00,
+L00161,many_to_one,auto_match,pay_QSRBOsSN8752gf|pay_noXDJyhm2E8hw9,ICICN86396096262,2,1,net,34465.85,34465.85,batch settlement of 2 txns; narration carries no per-txn reference
+L00162,clean_1to1,auto_match,pay_Jk8unffbBaOXLj,HDFCN17911244211,1,1,net,32444.80,32444.80,
+L00163,clean_1to1,auto_match,pay_y4uO6CZklta5lQ,UTIBN23124473158,1,1,net,9763.02,9763.02,
+L00164,clean_1to1,auto_match,pay_XLtkYn9UFB4CBM,KKBKN25313552510,1,1,net,220.67,220.67,
+L00165,missing_on_gateway,exception:unexplained_credit,,UTIBN61172959639,0,1,,,899.00,credit with no gateway counterpart; true exception
+L00166,clean_1to1,auto_match,pay_g1ZAUtruWwzfJX,HDFCN40104145964,1,1,net,331.98,331.98,
+L00167,clean_1to1,auto_match,pay_FruXUEofqXsTfw,YESBN12356798363,1,1,net,1544.66,1544.66,
+L00168,not_settleable,no_action,pay_Cwqh7JfwBnjzGB,,1,0,,,,"status=failed; never settleable, must NOT be reported as an exception"
+L00169,rounding,auto_match,pay_9hohd5cKrpeIgr,UTIBN12257207650,1,1,net,3481.09,3481.04,rounding delta -0.05
+L00170,clean_1to1,auto_match,pay_c0bKRs1oHGkWjX,UTIBN70396531361,1,1,net,389.58,389.58,
+L00171,clean_1to1,auto_match,pay_v1NhBYDK9YYwsh,UTIBN00425488214,1,1,net,684.00,684.00,
+L00172,fee_deduction,auto_match,pay_q6tMtlKBR4uZLi,KKBKN70806129439,1,1,gross,4851.00,4851.00,
+L00173,clean_1to1,auto_match,pay_1dfdr1PgvMg0sK,ICICN91813317087,1,1,net,19999.00,19999.00,
+L00174,missing_on_gateway,exception:unexplained_credit,,UTIBN46617662047,0,1,,,4366.91,credit with no gateway counterpart; true exception
+L00175,clean_1to1,auto_match,pay_D4UDrakwG23Gnw,ICICN59959961002,1,1,net,438.40,438.40,
+L00176,clean_1to1,auto_match,pay_7edNqhc2VeCWxM,ICICN05698152873,1,1,net,9763.02,9763.02,
+L00177,clean_1to1,auto_match,pay_HtghFodMIvbo08,UTIBN64350238503,1,1,net,30611.00,30611.00,
+L00178,clean_1to1,auto_match,pay_gcFGoPwBEtY24o,UTIBN60331903689,1,1,net,1057.04,1057.04,
+L00179,clean_1to1,auto_match,pay_siMzEQhQeeq8In,ICICN28348315203,1,1,net,1199.00,1199.00,
+L00180,partial_refund,auto_match,pay_b3yyCconylQBId,YESBN42673204413,1,1,net,384.67,384.67,partial refund of 49.33 deducted before settlement
+L00181,duplicate_settlement,exception:duplicate_settlement,pay_KQu1q2lCDbCaDc,ICICN87950830440|UTIBN95565749025,1,2,net,31595.33,63190.66,settled twice; agent must link both credits AND flag the overpayment
+L00182,clean_1to1,auto_match,pay_y1LcQUjyWPf9e9,KKBKN51376515881,1,1,net,36202.77,36202.77,
+L00183,many_to_one,auto_match,pay_GjKFO4Xm5l4Dak|pay_5BwizSJpTshv50|pay_lUXL607Gfj5aLL|pay_27BsuyuWl9jc08|pay_qMWg7oQrjgnJ1G|pay_1Ds6hTT62hC4BF|pay_rDOVGRXeTSu57c|pay_38oRmqEjF0lUFs,YESBN58741314675,8,1,net,64975.02,64975.02,batch settlement of 8 txns; narration carries no per-txn reference
+L00184,clean_1to1,auto_match,pay_pbsrGn42YAdJXu,YESBN80061558108,1,1,net,26454.20,26454.20,
+L00185,missing_on_gateway,exception:unexplained_credit,,HDFCN66241118600,0,1,,,1470.27,credit with no gateway counterpart; true exception
+L00186,clean_1to1,auto_match,pay_PKEysBfo9AJrEs,ICICN37931269789,1,1,net,2565.00,2565.00,
+L00187,missing_on_bank,exception:unsettled,pay_JYFIFu9PpuDTEG,,1,0,net,16663.24,,captured but never settled; true exception
+L00188,clean_1to1,auto_match,pay_c4BFkOZHFiV3JA,ICICN87056227104,1,1,net,399.00,399.00,
+L00189,duplicate_settlement,exception:duplicate_settlement,pay_wOa7mrs063BLUt,ICICN20331922270|YESBN32426877418,1,2,net,975.42,1950.84,settled twice; agent must link both credits AND flag the overpayment
+L00190,many_to_one,auto_match,pay_xHmaLtvg6x6qG6|pay_ODFlEV3PWIZgcx|pay_2mPNVbv1R25u5T|pay_CcrMmSGAlOV118,KKBKN42429563343,4,1,net,67915.51,67915.51,batch settlement of 4 txns; narration carries no per-txn reference
+L00191,garbled_narration,auto_match,pay_c81LyjIKnSBwPZ,HDFCN50267551254,1,1,net,3339.62,3339.62,narration garbled; reference recoverable
+L00192,clean_1to1,auto_match,pay_MvERztc74oW757,HDFCN23244123361,1,1,net,1558.48,1558.48,
+L00193,clean_1to1,auto_match,pay_6EQy1DTpW6gyiu,KKBKN13273034615,1,1,net,877.78,877.78,
+L00194,clean_1to1,auto_match,pay_zRH1gDZfwRUgP3,ICICN68612059438,1,1,net,584.86,584.86,
+L00195,clean_1to1,auto_match,pay_sX0bIrlswAbCut,UTIBN02916815466,1,1,net,1635.00,1635.00,
+L00196,fx_settlement,auto_match,pay_nW7BrVSXlrGQcM,KKBKN95867805555,1,1,net,24102.47,24102.47,fx EUR->INR @ 92.97
+L00197,missing_on_gateway,exception:unexplained_credit,,YESBN59660487368,0,1,,,299.00,credit with no gateway counterpart; true exception
+L00198,clean_1to1,auto_match,pay_JAwWnA5MruXxOg,KKBKN66309329981,1,1,net,49297.22,49297.22,
+L00199,fee_deduction,auto_match,pay_JG3m26kDxU3plE,YESBN76164819807,1,1,gross,5999.00,5999.00,
+L00200,missing_on_bank,exception:unsettled,pay_W0LWYhUkxAQvj6,,1,0,net,1468.05,,captured but never settled; true exception
+L00201,missing_on_gateway,exception:unexplained_credit,,KKBKN74222946430,0,1,,,2526.00,credit with no gateway counterpart; true exception
+L00202,clean_1to1,auto_match,pay_2GuHxy37FPk3HE,UTIBN81488810798,1,1,net,204.00,204.00,
+L00203,missing_on_gateway,exception:unexplained_credit,,HDFCN51371717318,0,1,,,1799.00,credit with no gateway counterpart; true exception
+L00204,missing_on_bank,exception:unsettled,pay_LZONWDaqWAMrFO,,1,0,net,780.14,,captured but never settled; true exception
+L00205,clean_1to1,auto_match,pay_Fau5GEFkleWBRt,ICICN29258796434,1,1,net,699.00,699.00,
+L00206,clean_1to1,auto_match,pay_aW8zd9AwPZiDXr,KKBKN06734996010,1,1,net,9999.00,9999.00,
+L00207,missing_on_bank,exception:unsettled,pay_tKmJfCpuKIWQqJ,,1,0,net,1182.00,,captured but never settled; true exception
+L00208,date_offset,auto_match,pay_DoDxvmRTqqMV7b,HDFCN82819793164,1,1,net,2937.07,2937.07,settlement lag T+4
+L00209,clean_1to1,auto_match,pay_saN1ybaouBjq2o,UTIBN33342643350,1,1,net,353827.40,353827.40,
+L00210,clean_1to1,auto_match,pay_L0hflG6LUHhkWn,ICICN16704502329,1,1,net,5999.00,5999.00,
+L00211,fx_settlement,auto_match,pay_All7H9jVZZQlx4,HDFCN05316117768,1,1,net,591.96,591.96,fx GBP->INR @ 109.42
+L00212,clean_1to1,auto_match,pay_EFV12KmioGiZ8j,KKBKN03202032650,1,1,net,340.76,340.76,
+L00213,clean_1to1,auto_match,pay_7vv5lqvZ3FXJDQ,KKBKN83230358929,1,1,net,171.55,171.55,
+L00214,date_offset,auto_match,pay_17WTjI89NB2mrd,KKBKN26693351342,1,1,net,999.00,999.00,settlement lag T+2
+L00215,clean_1to1,auto_match,pay_oQCt0hIVNDje4W,HDFCN14448564510,1,1,net,3878.26,3878.26,
+L00216,clean_1to1,auto_match,pay_MH37QycMgL1YP9,HDFCN46074555347,1,1,net,3114.69,3114.69,
+L00217,clean_1to1,auto_match,pay_wNIVZ19ou1tg6U,YESBN26913119642,1,1,net,268.34,268.34,
+L00218,clean_1to1,auto_match,pay_C0cpJjQrbFo1So,UTIBN65535851253,1,1,net,963.64,963.64,
+L00219,clean_1to1,auto_match,pay_DrK1dDNCFLBe9k,ICICN98628950905,1,1,net,999.00,999.00,
+L00220,fee_deduction,auto_match,pay_Uhvfg8zKS8RyZA,YESBN05120800564,1,1,gross,29999.00,29999.00,
+L00221,clean_1to1,auto_match,pay_xKl5CT24XlGj00,KKBKN18153523736,1,1,net,348.57,348.57,
+L00222,clean_1to1,auto_match,pay_suiCWms8OBzByf,KKBKN35806882850,1,1,net,3813.98,3813.98,
+L00223,clean_1to1,auto_match,pay_h7sa5pQ061vly0,HDFCN60723111271,1,1,net,216.44,216.44,
+L00224,clean_1to1,auto_match,pay_z044m8fJ2FmiHc,UTIBN25730662481,1,1,net,390.76,390.76,
+L00225,clean_1to1,auto_match,pay_ReAHIbNUkU7uxc,YESBN45772785324,1,1,net,471.60,471.60,
+L00226,many_to_one,auto_match,pay_n8zA4ADUCC8yDx|pay_J3WYAxPtnzjEgI,KKBKN32759980111,2,1,net,23585.02,23585.02,batch settlement of 2 txns; narration carries no per-txn reference
+L00227,clean_1to1,auto_match,pay_L51CEvTlstgZJk,UTIBN79927079551,1,1,net,2999.00,2999.00,
+L00228,clean_1to1,auto_match,pay_wMZFbN5LAkx2qm,KKBKN37660465586,1,1,net,288.42,288.42,
+L00229,clean_1to1,auto_match,pay_ZQ6u3G5hbZiZWg,HDFCN10633016583,1,1,net,299.00,299.00,
+L00230,clean_1to1,auto_match,pay_mqj4IKmShSWeml,KKBKN17015959194,1,1,net,699.00,699.00,
+L00231,clean_1to1,auto_match,pay_cSwAD4Du7Y28zD,ICICN45307624843,1,1,net,577.80,577.80,
+L00232,clean_1to1,auto_match,pay_TEMsjpH8FZnAFa,UTIBN74859532593,1,1,net,2892.84,2892.84,
+L00233,fee_deduction,auto_match,pay_fHFDM5589UreCy,HDFCN40388436604,1,1,gross,2999.00,2999.00,
+L00234,clean_1to1,auto_match,pay_CWug7rDrmTMDsk,ICICN71122182315,1,1,net,2173.18,2173.18,
+L00235,duplicate_settlement,exception:duplicate_settlement,pay_0nCkhW63qopdPR,ICICN39705195826|KKBKN98632106133,1,2,net,1169.17,2338.34,settled twice; agent must link both credits AND flag the overpayment
+L00236,garbled_narration,auto_match,pay_1l3vnF8UyUuDzM,HDFCN46040142473,1,1,net,58.58,58.58,narration garbled; reference recoverable
+L00237,clean_1to1,auto_match,pay_SKEeUSjnezRybc,ICICN04519577825,1,1,net,96.66,96.66,
+L00238,clean_1to1,auto_match,pay_4FRIAx9BfMq4iv,YESBN04823571558,1,1,net,11643.49,11643.49,
+L00239,clean_1to1,auto_match,pay_GZgFj6eS8tpWzt,KKBKN99799070755,1,1,net,37229.08,37229.08,
+L00240,clean_1to1,auto_match,pay_W5fEqIffpU1TO7,YESBN04918727420,1,1,net,178670.02,178670.02,
+L00241,fee_deduction,auto_match,pay_ctlov3RL2FoTCZ,HDFCN14576832102,1,1,gross,45743.45,45743.45,
+L00242,clean_1to1,auto_match,pay_omjtiVSzaxdGYa,HDFCN78192365346,1,1,net,235.00,235.00,
+L00243,clean_1to1,auto_match,pay_YG4AP3WOkpMHsF,YESBN99927517588,1,1,net,10476.47,10476.47,
+L00244,missing_on_bank,exception:unsettled,pay_Kmwtm0vHRArqMB,,1,0,net,1170.70,,captured but never settled; true exception
+L00245,garbled_narration,auto_match,pay_LHlhUU4sOpnMYO,YESBN48963406791,1,1,net,19527.02,19527.02,narration garbled; reference recoverable
+L00246,clean_1to1,auto_match,pay_JIriYg7VRBnc5Q,HDFCN21994711363,1,1,net,349.00,349.00,
+L00247,clean_1to1,auto_match,pay_Cnog2fATCCjV4y,ICICN35564343697,1,1,net,5857.42,5857.42,
+L00248,clean_1to1,auto_match,pay_qworx6qEkko2LP,KKBKN42813190924,1,1,net,45913.00,45913.00,
+L00249,missing_on_gateway,exception:unexplained_credit,,HDFCN62207223959,0,1,,,402.00,credit with no gateway counterpart; true exception
+L00250,clean_1to1,auto_match,pay_sDHZFRWzJIUz4H,KKBKN45057303627,1,1,net,49.00,49.00,
+L00251,date_offset,auto_match,pay_9dp8j5O7gsxdwD,YESBN50765975954,1,1,net,1421.00,1421.00,settlement lag T+4
+L00252,clean_1to1,auto_match,pay_j70yvQTCUUOrjj,HDFCN37271175957,1,1,net,27112.34,27112.34,
+L00253,clean_1to1,auto_match,pay_BErv8GtFUzd8Lt,KKBKN15066626705,1,1,net,15659.83,15659.83,
+L00254,clean_1to1,auto_match,pay_NZkvkMuLy2fgff,YESBN10903267149,1,1,net,1199.00,1199.00,
+L00255,clean_1to1,auto_match,pay_gFMoSscz2vQkSE,ICICN14559376618,1,1,net,48966.52,48966.52,
+L00256,clean_1to1,auto_match,pay_yl0FDQ9zYT3uCi,ICICN26005595501,1,1,net,1499.00,1499.00,
+L00257,clean_1to1,auto_match,pay_8UZcD9ULJsIWDc,ICICN03736060148,1,1,net,3178.18,3178.18,
+L00258,garbled_narration,auto_match,pay_yJUvlIPmaRBfvP,UTIBN21751887817,1,1,net,42459.26,42459.26,narration garbled; reference destroyed
+L00259,missing_on_gateway,exception:unexplained_credit,,ICICN23979137876,0,1,,,45991.40,credit with no gateway counterpart; true exception
+L00260,clean_1to1,auto_match,pay_au3Dfi1gMHJXhL,HDFCN85174460045,1,1,net,2024.27,2024.27,
+L00261,missing_on_gateway,exception:unexplained_credit,,HDFCN60461540211,0,1,,,19324.00,credit with no gateway counterpart; true exception
+L00262,clean_1to1,auto_match,pay_klP6KS3gOZbEnU,KKBKN96944391649,1,1,net,4073.00,4073.00,
+L00263,clean_1to1,auto_match,pay_opVcUeRzi9nr9h,ICICN77460406720,1,1,net,134242.49,134242.49,
+L00264,clean_1to1,auto_match,pay_EYWHeLDwtPoCmS,HDFCN19134438998,1,1,net,49.00,49.00,
+L00265,clean_1to1,auto_match,pay_BqSZrLmOzQ19MK,KKBKN81187233351,1,1,net,379.68,379.68,
+L00266,garbled_narration,auto_match,pay_MIVO8WpcESrIkQ,ICICN33324707392,1,1,net,920.00,920.00,narration garbled; reference recoverable
+L00267,date_offset,auto_match,pay_R15AgfWknejAgB,YESBN30364687191,1,1,net,699.00,699.00,settlement lag T+4
+L00268,clean_1to1,auto_match,pay_Zip6dG2MI4epIJ,UTIBN00000015291,1,1,net,999.00,999.00,
+L00269,clean_1to1,auto_match,pay_GPsWsqkfI0jMQK,UTIBN15848266913,1,1,net,3441.61,3441.61,
+L00270,clean_1to1,auto_match,pay_OEdAnpAM2NJDNw,ICICN83638164321,1,1,net,674.21,674.21,
+L00271,clean_1to1,auto_match,pay_WTixUU2HBngt9X,UTIBN64489880315,1,1,net,9999.00,9999.00,
+L00272,clean_1to1,auto_match,pay_csROd2spn6nnW0,KKBKN32653060119,1,1,net,3426.75,3426.75,
+L00273,clean_1to1,auto_match,pay_n0bZbLgvXAhJi1,HDFCN89418433687,1,1,net,682.50,682.50,
+L00274,missing_on_bank,exception:unsettled,pay_CrvvAefq7cSV2U,,1,0,net,1170.70,,captured but never settled; true exception
+L00275,clean_1to1,auto_match,pay_HSghViBX2b8c8m,ICICN69177682938,1,1,net,149.00,149.00,
+L00276,clean_1to1,auto_match,pay_E3Q6JV5HiAcnoP,YESBN69964899718,1,1,net,1174.24,1174.24,
+L00277,clean_1to1,auto_match,pay_4tKNY2m9l4mgl1,ICICN89359538280,1,1,net,48819.02,48819.02,
+L00278,clean_1to1,auto_match,pay_IRjBQrfYJyKywA,UTIBN00273008696,1,1,net,23280.39,23280.39,
+L00279,garbled_narration,auto_match,pay_d8eyHdNPrfsOMe,ICICN66292508177,1,1,net,96.96,96.96,narration garbled; reference recoverable
+L00280,clean_1to1,auto_match,pay_mmDof7i97uwT7k,YESBN56133718444,1,1,net,780.14,780.14,
+L00281,clean_1to1,auto_match,pay_CnRq1gzEIg7j5D,KKBKN38318285605,1,1,net,1781.00,1781.00,
+L00282,clean_1to1,auto_match,pay_zHXZj3YaxWayIj,UTIBN96790898436,1,1,net,4721.00,4721.00,
+L00283,clean_1to1,auto_match,pay_BUMTSqGsPit4Mv,HDFCN97461917798,1,1,net,1502.42,1502.42,
+L00284,clean_1to1,auto_match,pay_FVcYPIuRHazPlR,ICICN86796325942,1,1,net,782.50,782.50,
+L00285,missing_on_gateway,exception:unexplained_credit,,YESBN51381865507,0,1,,,1239.00,credit with no gateway counterpart; true exception
+L00286,clean_1to1,auto_match,pay_tONh4R5G0Ke71h,UTIBN93678136750,1,1,net,782.50,782.50,
+L00287,clean_1to1,auto_match,pay_EJdMU1iWEarxip,UTIBN85965594282,1,1,net,92704.00,92704.00,
+L00288,missing_on_gateway,exception:unexplained_credit,,HDFCN83682144488,0,1,,,2499.00,credit with no gateway counterpart; true exception
+L00289,clean_1to1,auto_match,pay_jVaix2GVTk6xsn,KKBKN47238750827,1,1,net,4772.56,4772.56,
+L00290,clean_1to1,auto_match,pay_j3K8cujNfG0X2Q,ICICN99936216591,1,1,net,1695.00,1695.00,
+L00291,clean_1to1,auto_match,pay_rAhFUPDVV4FokZ,UTIBN39787137529,1,1,net,1900.84,1900.84,
+L00292,fx_settlement,auto_match,pay_qWJFMZ8R4DHGG3,KKBKN15239102929,1,1,net,143.27,143.27,fx USD->INR @ 86.31
+L00293,clean_1to1,auto_match,pay_KAEfnRLFfM9hjz,HDFCN90725873393,1,1,net,47.84,47.84,
+L00294,clean_1to1,auto_match,pay_gjWYslgfsbYJRz,HDFCN13712436585,1,1,net,40527.11,40527.11,
+L00295,clean_1to1,auto_match,pay_kEoJFrdkMNdCUU,YESBN75649157955,1,1,net,24010.00,24010.00,
+L00296,clean_1to1,auto_match,pay_XhZYGhcnbZ6VYA,HDFCN67130735104,1,1,net,199.00,199.00,
+L00297,clean_1to1,auto_match,pay_wCBTBMqFbnhJav,KKBKN66145901107,1,1,net,289.00,289.00,
+L00298,clean_1to1,auto_match,pay_2TOSrKaupQTeuY,HDFCN66123740779,1,1,net,362.94,362.94,
+L00299,clean_1to1,auto_match,pay_aeT06qk4B29Qib,ICICN11708894801,1,1,net,48629.60,48629.60,
+L00300,clean_1to1,auto_match,pay_xC7aIldZbqIcAE,KKBKN97040953141,1,1,net,480.67,480.67,
+L00301,clean_1to1,auto_match,pay_UywgX7DLZ2ZQQP,YESBN51622593648,1,1,net,29188.50,29188.50,
+L00302,missing_on_gateway,exception:unexplained_credit,,YESBN35923613376,0,1,,,68.00,credit with no gateway counterpart; true exception
+L00303,clean_1to1,auto_match,pay_9rWtFjqhNgBuPc,ICICN14174681359,1,1,net,4595.00,4595.00,
+L00304,not_settleable,no_action,pay_S53fuvLquZQdhh,,1,0,,,,"status=created; never settleable, must NOT be reported as an exception"
+L00305,many_to_one,auto_match,pay_nAupATPigGLqux|pay_s6yyR3rY5V3JNB|pay_CY8tXu9omYGZMb|pay_dgzOvMMwo7daS7|pay_eybgflrTgfx62G|pay_m3flKM48wC7Y5a|pay_W4EvoBwSLUy3WI|pay_W8rdcR8BqtPxsP,HDFCN75080196304,8,1,net,21184.42,21184.42,batch settlement of 8 txns; narration carries no per-txn reference
+L00306,date_offset,auto_match,pay_4tac263SYOVgGe,ICICN78105391287,1,1,net,975.42,975.42,settlement lag T+3
+L00307,missing_on_bank,exception:unsettled,pay_tuELSi1Egr1CRi,,1,0,net,38465.28,,captured but never settled; true exception
+L00308,clean_1to1,auto_match,pay_ppKYgjhPQJFbz6,KKBKN10089876108,1,1,net,3090.31,3090.31,
+L00309,duplicate_settlement,exception:duplicate_settlement,pay_P8fLGWdYErAYWX,HDFCN66664110654|YESBN34826899962,1,2,net,1199.00,2398.00,settled twice; agent must link both credits AND flag the overpayment
+L00310,clean_1to1,auto_match,pay_PFYNexbxZLBlxD,ICICN17558517774,1,1,net,281.31,281.31,
+L00311,partial_refund,auto_match,pay_Lz8iBrlkjM8EvG,HDFCN90016356407,1,1,net,1238.49,1238.49,partial refund of 481.43 deducted before settlement
+L00312,clean_1to1,auto_match,pay_HP860HlkSqTCpf,KKBKN10537092300,1,1,net,5227.00,5227.00,
+L00313,missing_on_gateway,exception:unexplained_credit,,UTIBN47161982734,0,1,,,1905.16,credit with no gateway counterpart; true exception
+L00314,fx_settlement,auto_match,pay_5sn4YYUxCqHW40,KKBKN28055077406,1,1,net,19746.82,19746.82,fx AED->INR @ 23.50
+L00315,clean_1to1,auto_match,pay_5XugcFOStUbQMg,ICICN01227595002,1,1,net,63.76,63.76,
+L00316,missing_on_bank,exception:unsettled,pay_91FgWCTm2iDMJd,,1,0,net,643.00,,captured but never settled; true exception
+L00317,not_settleable,no_action,pay_S5Lharwi8c4nBc,,1,0,,,,"status=created; never settleable, must NOT be reported as an exception"
+L00318,clean_1to1,auto_match,pay_p6xRKvjcxyecdA,UTIBN95300677625,1,1,net,171564.18,171564.18,
+L00319,many_to_one,auto_match,pay_Q8KSXjoYotv2ge|pay_aj45hfyzCoYiN7|pay_XBtkzco91pAQZ4|pay_w1koTWJalmBS9k|pay_XhGBnIxvJJfUL4|pay_SM2neJyM8jG6LE|pay_sIiO71oiQ8jdqf|pay_RiVOVaicOndr7T,KKBKN56919832102,8,1,net,35656.42,35656.42,batch settlement of 8 txns; narration carries no per-txn reference
+L00320,fee_deduction,auto_match,pay_0reNyzkjKfZ3m8,UTIBN44076634933,1,1,gross,428.97,428.97,
+L00321,clean_1to1,auto_match,pay_B41hfs9jqnYAQi,KKBKN43385324725,1,1,net,449.00,449.00,
+L00322,clean_1to1,auto_match,pay_bxUrx3DXUy6SKR,UTIBN21254508095,1,1,net,3508.00,3508.00,
+L00323,clean_1to1,auto_match,pay_zt2Clh27paD3ri,ICICN73100817852,1,1,net,5875.12,5875.12,
+L00324,clean_1to1,auto_match,pay_V5lB45GZDqr2RP,ICICN70140052781,1,1,net,1799.00,1799.00,
+L00325,clean_1to1,auto_match,pay_uDQ28mhBbMto9K,ICICN52595332227,1,1,net,682.50,682.50,
+L00326,clean_1to1,auto_match,pay_woioBBfGwcEzf6,KKBKN64846735742,1,1,net,39347.34,39347.34,
+L00327,clean_1to1,auto_match,pay_KjT0QRO3llU9wz,ICICN84185201362,1,1,net,4956.75,4956.75,
+L00328,clean_1to1,auto_match,pay_KeZl7OQexfBUre,ICICN62019712124,1,1,net,7026.00,7026.00,
+L00329,clean_1to1,auto_match,pay_nekBF5EofZMXli,HDFCN89523120219,1,1,net,24409.02,24409.02,
+L00330,clean_1to1,auto_match,pay_TdaiA9JDzttIQW,YESBN64969277119,1,1,net,47.99,47.99,
+L00331,clean_1to1,auto_match,pay_whkHkDARnBtpf2,YESBN99393449743,1,1,net,4881.02,4881.02,
+L00332,garbled_narration,auto_match,pay_iMUEU7nKQ0IPX4,ICICN20300449646,1,1,net,9999.00,9999.00,narration garbled; reference recoverable
+L00333,clean_1to1,auto_match,pay_v2z3wHTMzmvLvO,HDFCN34236220334,1,1,net,19999.00,19999.00,
+L00334,clean_1to1,auto_match,pay_QzY0I1bcJY58Pu,YESBN50228946652,1,1,net,3745.99,3745.99,
+L00335,clean_1to1,auto_match,pay_zKgnn4aobomqAD,ICICN98472303420,1,1,net,3499.00,3499.00,
+L00336,fx_settlement,auto_match,pay_4xdC04UA61qQ4I,YESBN12259095668,1,1,net,191.52,191.52,fx EUR->INR @ 92.97
+L00337,clean_1to1,auto_match,pay_giffdhHD9GcpSw,HDFCN71222764338,1,1,net,684.57,684.57,
+L00338,missing_on_bank,exception:unsettled,pay_y29m6mVVaSI0mm,,1,0,net,1673.03,,captured but never settled; true exception
+L00339,clean_1to1,auto_match,pay_RyXGRweNX3umYR,HDFCN65812920592,1,1,net,5464.00,5464.00,
+L00340,duplicate_settlement,exception:duplicate_settlement,pay_oBpDQUZjPAl0NU,HDFCN22121548158|KKBKN29877873585,1,2,net,7810.22,15620.44,settled twice; agent must link both credits AND flag the overpayment
+L00341,clean_1to1,auto_match,pay_T7BZjlemlbtSec,ICICN83180036660,1,1,net,499.00,499.00,
+L00342,fee_deduction,auto_match,pay_OcuZlrp4H5pJTa,ICICN37618518626,1,1,gross_minus_fee,2939.02,2939.02,
+L00343,clean_1to1,auto_match,pay_jgRI2GUow5lDVM,ICICN79761781596,1,1,net,455.03,455.03,
+L00344,rounding,auto_match,pay_3wK1giuCntNGLK,KKBKN99670808974,1,1,net,2230.00,2229.96,rounding delta -0.04
+L00345,clean_1to1,auto_match,pay_2thADps1DH8Ovn,KKBKN64890082484,1,1,net,48819.02,48819.02,
+L00346,clean_1to1,auto_match,pay_JpNMVEq12VgJwA,YESBN37846790870,1,1,net,1834.37,1834.37,
+L00347,clean_1to1,auto_match,pay_8qiMM8czErQv9B,UTIBN33470474764,1,1,net,172.00,172.00,
+L00348,fx_settlement,auto_match,pay_fisvUwngkS135M,UTIBN85229425251,1,1,net,1843.58,1843.58,fx USD->INR @ 86.31
+L00349,clean_1to1,auto_match,pay_MfqCDtrEoWxOnw,HDFCN33183611338,1,1,net,3365.00,3365.00,
+L00350,clean_1to1,auto_match,pay_0JBluReulhCStA,YESBN69143362999,1,1,net,2638.00,2638.00,
+L00351,clean_1to1,auto_match,pay_EoKbI5o17RTvkg,UTIBN82819022179,1,1,net,283.03,283.03,
+L00352,garbled_narration,auto_match,pay_LHt69q7vZgYrY7,YESBN92177905528,1,1,net,54.68,54.68,narration garbled; reference recoverable
+L00353,clean_1to1,auto_match,pay_QumiRzbVVhhKpY,HDFCN24373615873,1,1,net,3790.59,3790.59,
+L00354,clean_1to1,auto_match,pay_ZNdTaOvIu3W1Bf,KKBKN72702896660,1,1,net,1170.70,1170.70,
+L00355,clean_1to1,auto_match,pay_SD98uO5nvI30O6,YESBN93953096906,1,1,net,442.66,442.66,
+L00356,duplicate_settlement,exception:duplicate_settlement,pay_DWr3uW9wh2Tp11,KKBKN38775833364|HDFCN41231905772,1,2,net,48966.52,97933.04,settled twice; agent must link both credits AND flag the overpayment
+L00357,clean_1to1,auto_match,pay_Xp1JPedNETNtg9,UTIBN32611890034,1,1,net,4881.02,4881.02,
+L00358,clean_1to1,auto_match,pay_d77jXccMvXYpz5,KKBKN13072211386,1,1,net,584.86,584.86,
+L00359,clean_1to1,auto_match,pay_VAYhFhKkJZ9eE1,UTIBN77269032655,1,1,net,4649.22,4649.22,
+L00360,clean_1to1,auto_match,pay_wLIwhyciggKQhu,YESBN84474083781,1,1,net,476.61,476.61,
+L00361,clean_1to1,auto_match,pay_KVUWH70X58mzM9,ICICN72055033000,1,1,net,7999.00,7999.00,
+L00362,clean_1to1,auto_match,pay_hqhzZabL922fyK,UTIBN63000998433,1,1,net,299.00,299.00,
+L00363,clean_1to1,auto_match,pay_jWK9ZtjbmOqZ2Q,ICICN81822387940,1,1,net,3624.00,3624.00,
+L00364,missing_on_bank,exception:unsettled,pay_mAtk87owDbasfk,,1,0,net,3957.35,,captured but never settled; true exception
+L00365,clean_1to1,auto_match,pay_sQ35zh4cdDMlod,KKBKN66534460422,1,1,net,96.66,96.66,
+L00366,clean_1to1,auto_match,pay_9UtF2jqpwJ9AfF,KKBKN84947712903,1,1,net,899.00,899.00,
+L00367,clean_1to1,auto_match,pay_ntdtUA4VWyJj8h,ICICN73063435948,1,1,net,183.27,183.27,
+L00368,clean_1to1,auto_match,pay_w2g0gclfk04xtm,HDFCN97899901140,1,1,net,95.50,95.50,
+L00369,clean_1to1,auto_match,pay_4OWy47jW8wRTNW,KKBKN80727903716,1,1,net,690.58,690.58,
+L00370,clean_1to1,auto_match,pay_qEFXhImFv1ocC4,KKBKN90696857467,1,1,net,30721.00,30721.00,
+L00371,clean_1to1,auto_match,pay_jfudVh1A5t0jye,HDFCN41691053021,1,1,net,3788.67,3788.67,
+L00372,clean_1to1,auto_match,pay_ffaub0h4Wr6FAq,KKBKN81554260972,1,1,net,1984.00,1984.00,
+L00373,clean_1to1,auto_match,pay_Dnd0GDhxyZqWPE,UTIBN68627288407,1,1,net,77.37,77.37,
+L00374,clean_1to1,auto_match,pay_J96zEASiwMin5H,KKBKN39615976405,1,1,net,4631.07,4631.07,
+L00375,clean_1to1,auto_match,pay_B2eLT3bp1YHqj2,HDFCN42985144869,1,1,net,584.86,584.86,
+L00376,missing_on_bank,exception:unsettled,pay_9KYJag4rlRzrF1,,1,0,net,443.59,,captured but never settled; true exception
+L00377,clean_1to1,auto_match,pay_csLmnlA1Dlq6ry,ICICN93272728129,1,1,net,204.00,204.00,
+L00378,many_to_one,auto_match,pay_JPtwnLFqNVOLxb|pay_QT7gK912kMcklX|pay_pnla9kpwecjZx5|pay_LG0JZJsSYnNmWX,ICICN01237631774,4,1,net,8574.96,8574.96,batch settlement of 4 txns; narration carries no per-txn reference
+L00379,duplicate_settlement,exception:duplicate_settlement,pay_gLilzCeSogExoU,UTIBN24032115355|ICICN21883458192,1,2,net,19904.30,39808.60,settled twice; agent must link both credits AND flag the overpayment
+L00380,clean_1to1,auto_match,pay_WkLLJBwgw3N8dk,KKBKN29254355196,1,1,net,1199.00,1199.00,
+L00381,clean_1to1,auto_match,pay_tClJAmLWq4lPaf,UTIBN63217400391,1,1,net,23258.08,23258.08,
+L00382,clean_1to1,auto_match,pay_ff8Loy2aScA9b7,UTIBN61762313361,1,1,net,19999.00,19999.00,
+L00383,clean_1to1,auto_match,pay_h6VmDlDEQ5yHxE,YESBN93242024837,1,1,net,1999.00,1999.00,
+L00384,date_offset,auto_match,pay_akw3sXIxVoy1Wi,YESBN90093781460,1,1,net,1614.95,1614.95,settlement lag T+3
+L00385,missing_on_bank,exception:unsettled,pay_C1P92w4Aq5A2Di,,1,0,net,2188.00,,captured but never settled; true exception
+L00386,clean_1to1,auto_match,pay_8djCE7SkK1haXH,ICICN06718222667,1,1,net,149.00,149.00,
+L00387,clean_1to1,auto_match,pay_yEWnKAntR0kSGS,KKBKN63201629073,1,1,net,3190.08,3190.08,
+L00388,clean_1to1,auto_match,pay_94XnXZoDfDV67a,KKBKN06921958730,1,1,net,2999.00,2999.00,
+L00389,clean_1to1,auto_match,pay_SjY3SR0VeDUIhA,HDFCN17092640703,1,1,net,194.30,194.30,
+L00390,clean_1to1,auto_match,pay_s1t1HuW8bQ2bDj,HDFCN82039170263,1,1,net,1252.07,1252.07,
+L00391,clean_1to1,auto_match,pay_aVVsZQ7QjtkQ4x,UTIBN24055364818,1,1,net,43888.34,43888.34,
+L00392,clean_1to1,auto_match,pay_xr8TzAjm9ioBcy,ICICN06661799623,1,1,net,4991.00,4991.00,
+L00393,date_offset,auto_match,pay_DTFCNlx6XBathp,KKBKN62914304913,1,1,net,4876.00,4876.00,settlement lag T+2
+L00394,fee_deduction,auto_match,pay_ytkVYQ8Sis6avN,HDFCN17530796618,1,1,gross_minus_fee,3331.92,3331.92,
+L00395,clean_1to1,auto_match,pay_uo9eQmEQNu2zga,ICICN42444748904,1,1,net,584.86,584.86,
+L00396,clean_1to1,auto_match,pay_XWMeYEOc6SJ2Xw,UTIBN96539160770,1,1,net,2554.26,2554.26,
+L00397,partial_refund,auto_match,pay_TIjlfZIbRnLyzX,KKBKN93335623039,1,1,net,69133.32,69133.32,partial refund of 64658.48 deducted before settlement
+L00398,clean_1to1,auto_match,pay_kcRThMSNfI1U0S,KKBKN04722053970,1,1,net,4847.83,4847.83,
+L00399,missing_on_gateway,exception:unexplained_credit,,UTIBN96053026184,0,1,,,8596.77,credit with no gateway counterpart; true exception
+L00400,clean_1to1,auto_match,pay_zpczzpB1axciUH,KKBKN59795319260,1,1,net,199.00,199.00,
+L00401,fx_settlement,auto_match,pay_cusVJ9MsSs7voG,UTIBN66036162486,1,1,net,443.15,443.15,fx GBP->INR @ 109.42
+L00402,clean_1to1,auto_match,pay_x9mRaeCoRUO8fB,KKBKN90571918986,1,1,net,276.00,276.00,
+L00403,date_offset,auto_match,pay_qOQJDzJ9axRDdX,ICICN39644028253,1,1,net,29999.00,29999.00,settlement lag T+2
+L00404,clean_1to1,auto_match,pay_oUI3vPjcipRlbK,UTIBN26075699913,1,1,net,584.86,584.86,
+L00405,clean_1to1,auto_match,pay_iFCDDnn8eA4UGS,KKBKN40274067582,1,1,net,303647.00,303647.00,
+L00406,clean_1to1,auto_match,pay_mZGQwO2YZ8z49Y,YESBN95504932664,1,1,net,7833.82,7833.82,
+L00407,clean_1to1,auto_match,pay_eQ36gvNsJ7voqb,ICICN23788705841,1,1,net,4462.34,4462.34,
+L00408,clean_1to1,auto_match,pay_rzbWRuGBRCNrKX,UTIBN57864578655,1,1,net,2914.16,2914.16,
+L00409,partial_refund,auto_match,pay_vHYZAZH2isRdwe,HDFCN70363094423,1,1,net,6502.42,6502.42,partial refund of 8496.58 deducted before settlement
+L00410,clean_1to1,auto_match,pay_rQLaLXBOe0MEMF,YESBN09573940598,1,1,net,17508.00,17508.00,
+L00411,fx_settlement,auto_match,pay_vHrN13bDm2tjco,YESBN41962332605,1,1,net,427.66,427.66,fx EUR->INR @ 92.97
+L00412,clean_1to1,auto_match,pay_l1LnQ9P6RfxfZH,KKBKN98902237900,1,1,net,3649.00,3649.00,
+L00413,clean_1to1,auto_match,pay_uumLHe043IINRc,YESBN02076123961,1,1,net,395.44,395.44,
+L00414,not_settleable,no_action,pay_bP0Fa6zyTW29Mc,,1,0,,,,"status=created; never settleable, must NOT be reported as an exception"
+L00415,clean_1to1,auto_match,pay_tM5D6cpTucAFuD,HDFCN87993844404,1,1,net,4683.00,4683.00,
+L00416,clean_1to1,auto_match,pay_PYu2dmzIChuOWz,ICICN66401632957,1,1,net,3794.72,3794.72,
+L00417,clean_1to1,auto_match,pay_QCogGz9JXVnTci,UTIBN46746215958,1,1,net,487.22,487.22,
+L00418,clean_1to1,auto_match,pay_zKJeP18s5goYWt,HDFCN99621836677,1,1,net,8461.52,8461.52,
+L00419,clean_1to1,auto_match,pay_iY21iiRSorNLIc,ICICN35174656426,1,1,net,406.52,406.52,
+L00420,clean_1to1,auto_match,pay_NOvwLWkOlFRCy2,YESBN39047331454,1,1,net,4462.15,4462.15,
+L00421,clean_1to1,auto_match,pay_0unei3SasaLusp,KKBKN78621078187,1,1,net,2866.00,2866.00,
+L00422,clean_1to1,auto_match,pay_j3B0LQmp7ZUex8,KKBKN01514599201,1,1,net,2904.38,2904.38,
+L00423,not_settleable,no_action,pay_lQldxyiPbg9QVN,,1,0,,,,"status=failed; never settleable, must NOT be reported as an exception"
+L00424,clean_1to1,auto_match,pay_pUMqv13ARsvint,UTIBN29735615266,1,1,net,90860.00,90860.00,
+L00425,clean_1to1,auto_match,pay_rEYxopz2LSxks4,UTIBN15712763835,1,1,net,2324.97,2324.97,
+L00426,clean_1to1,auto_match,pay_ELOpNMW4WIYQeA,YESBN96780826493,1,1,net,2922.00,2922.00,
+L00427,clean_1to1,auto_match,pay_Oky1SswWzn60mM,KKBKN83353910161,1,1,net,38689.94,38689.94,
+L00428,clean_1to1,auto_match,pay_moorrnE6QA1EQZ,YESBN91004202886,1,1,net,291.94,291.94,
+L00429,clean_1to1,auto_match,pay_qG5V7vtJq4jdnu,HDFCN24702881411,1,1,net,799.00,799.00,
+L00430,fx_settlement,auto_match,pay_MepJY9fc6OFtNh,UTIBN52527410254,1,1,net,1759.45,1759.45,fx AED->INR @ 23.50
+L00431,clean_1to1,auto_match,pay_MsGK8ModbxgLOS,KKBKN00144130686,1,1,net,5857.42,5857.42,
+L00432,clean_1to1,auto_match,pay_ZWgFiIjaEAkmGU,UTIBN10847913511,1,1,net,1756.54,1756.54,
+L00433,clean_1to1,auto_match,pay_OS7Qx9FJcMWDHp,HDFCN21889306357,1,1,net,456.96,456.96,
+L00434,clean_1to1,auto_match,pay_5p0UzMKau0vJu9,KKBKN10656733745,1,1,net,24492.05,24492.05,
+L00435,garbled_narration,auto_match,pay_woObGrmEUzNNkO,UTIBN53691585574,1,1,net,454.00,454.00,narration garbled; reference recoverable
+L00436,clean_1to1,auto_match,pay_jNYvRMswl7o2fu,UTIBN16782153926,1,1,net,393.00,393.00,
+L00437,garbled_narration,auto_match,pay_LkGctIX80waljc,UTIBN71855940799,1,1,net,963.64,963.64,narration garbled; reference recoverable
+L00438,missing_on_bank,exception:unsettled,pay_vysCUs1pCaYVhN,,1,0,net,28365.40,,captured but never settled; true exception
+L00439,clean_1to1,auto_match,pay_QEP5WAeibYKkJf,ICICN37185921268,1,1,net,699.00,699.00,
+L00440,clean_1to1,auto_match,pay_b8VpD1vX6pKWIK,UTIBN91538201140,1,1,net,145.48,145.48,
+L00441,garbled_narration,auto_match,pay_Flru8wo9Z6pF81,UTIBN68512062767,1,1,net,488.70,488.70,narration garbled; reference recoverable
+L00442,rounding,auto_match,pay_5aljYms5FDJ2S7,ICICN33720945167,1,1,net,4409.04,4409.07,rounding delta +0.03
+L00443,clean_1to1,auto_match,pay_4Y0jb081d54URH,UTIBN49469208564,1,1,net,449.00,449.00,
+L00444,clean_1to1,auto_match,pay_eg5vszhEwY5HTS,UTIBN38148374755,1,1,net,47.84,47.84,
+L00445,clean_1to1,auto_match,pay_10CJqcf97Mcj4D,UTIBN98332617050,1,1,net,29999.00,29999.00,
+L00446,clean_1to1,auto_match,pay_Ixpx8ppLPLXWGk,ICICN27276698345,1,1,net,499.00,499.00,
+L00447,date_offset,auto_match,pay_0m86aI6K7Ei4U1,HDFCN07121024234,1,1,net,19291.04,19291.04,settlement lag T+0
+L00448,clean_1to1,auto_match,pay_LOEgyxTNBwXzzX,HDFCN91439070547,1,1,net,46088.60,46088.60,
+L00449,partial_refund,auto_match,pay_jAabGcizwJKTnQ,YESBN66432031726,1,1,net,182.10,182.10,partial refund of 46.53 deducted before settlement
+L00450,clean_1to1,auto_match,pay_sacZcS4VRQjbIz,HDFCN10009089931,1,1,net,366.54,366.54,
+L00451,clean_1to1,auto_match,pay_I48MWlNRdNVod7,ICICN11058330967,1,1,net,4670.12,4670.12,
+L00452,clean_1to1,auto_match,pay_AU3wPbWUgzZFBE,KKBKN66788093761,1,1,net,230.54,230.54,
+L00453,clean_1to1,auto_match,pay_uvNEEDjBuM1Fys,KKBKN51887114860,1,1,net,30452.00,30452.00,
+L00454,clean_1to1,auto_match,pay_wODdOoPbXjLmbh,HDFCN62007302426,1,1,net,29291.02,29291.02,
+L00455,clean_1to1,auto_match,pay_ZPWrtz8Q9Mx5AR,ICICN48358626736,1,1,net,291.94,291.94,
+L00456,rounding,auto_match,pay_PAXZNJnQ1Pqtp3,YESBN39077372954,1,1,net,1596.66,1596.61,rounding delta -0.05
+L00457,clean_1to1,auto_match,pay_RiSSOatvbQl9Jg,ICICN65274286625,1,1,net,143.73,143.73,
+L00458,clean_1to1,auto_match,pay_qOWBcZM06OfLou,ICICN15756264126,1,1,net,299.00,299.00,
