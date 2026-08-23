@@ -1,104 +1,235 @@
 # Multi-source Reconciliation Agent
 
-Reconciles payment records across two independent sources — a payment gateway
-ledger and a bank settlement statement — auto-matches what it can, and produces
-an explained list of what it could not.
+Reconciles payment records across a gateway ledger, a settlement report and a
+bank statement — resolves what it can prove, and produces an explained,
+categorised list of what it could not.
 
 **Razorpay AI Buildathon — AI Finance Controller track.**
 
-> Status: **step 1 of 10 complete.** The synthetic data generator and ground-truth
-> answer key are built and self-validating. The matching pipeline is next.
+> Status: **benchmark and published baseline complete.** The synthetic data
+> generator, its self-validating answer key, and the B1 baseline that defines
+> the difficulty floor all run. The matching pipeline is next.
 
-## Why the data generator came first
+## Linkage is not reconciliation
 
-Every metric this project reports is computed against the answer key. If the key
-is wrong, every number downstream is wrong and no amount of matcher quality
-fixes it. So the key is constructed *alongside* the data rather than inferred
-from it afterwards — inferring it would mean writing a matcher to label the test
-set for the matcher — and its correctness is enforced by a 91-check suite spanning four seeds
-rather than assumed.
+The obvious way to build this benchmark is to make identification hard: damage
+the reference in the bank narration and force the matcher to work out which
+payments compose each credit. That was the original design, and two
+measurements killed it.
+
+Identification ambiguity **collapses at n=2**. Ambiguity comes from repeated
+values, and 45% of amounts here snap to a price-point catalogue, so ₹499 recurs
+and collides. But summing two such payments is a convolution of that spiky
+discrete distribution with itself — the pair-sums spread across hundreds of
+distinct values, and by n=3 every total is unique. Measured: 25.2% ambiguity at
+one payment per settlement, **0.0% at two**. Aggregation does not make
+identification harder; it annihilates it. Letting the matcher search freely over
+a whole day instead gives 89.5% ambiguity — unsolvable rather than hard. There
+is no dial setting in between.
+
+So identifiers here are **published in the clear** and joins are expected to
+succeed. That is not a concession, it is the point:
+
+> An exact identifier proves *which* transfer a row refers to. It proves nothing
+> about whether the amount is correct, whether anything is missing, whether
+> something was counted twice, whether a payment that should have settled did,
+> or whether a row was ever going to settle at all.
+
+The difficulty lives on the two axes that survive: **explanation** ("the amount
+does not tie — why?") and **disposition** ("is this row supposed to have a
+counterpart at all?").
 
 ## Quick start
 
 ```bash
-make data      # generate dev (seed 42) + held-out (seed 20260905), 500 records each
-make verify    # self-validation suite + intrinsic ambiguity floor
+make data      # generate all three families (development, primary, stress)
+make baseline  # run B1 and B2, report the difficulty floor D per family
+make verify    # self-validation suite + ambiguity + stats
 ```
 
 ## Dataset at a glance
 
-500 gateway transactions, 12 scenario classes, ~30% defect rate. Full schema and guarantees in [`docs/DATA_SPEC.md`](docs/DATA_SPEC.md).
+Six input files per batch — gateway ledger (event rows), settlement detail,
+settlement summary, bank statement, pricing rules, batch config — plus two
+answer-key views: `answer_key_cases.csv` (what the right answer is) and
+`answer_key_allocations.csv` (the atomic view, which is what makes an
+*attribution* checkable rather than merely an outcome). Full schema and
+guarantees in [`docs/DATA_SPEC.md`](docs/DATA_SPEC.md).
+
+Three families, three jobs. **development** is the only surface any threshold
+may be tuned against, and it carries every scenario class — a tuning set that
+lacks the phenomenon being tuned for freezes the abstention threshold at zero,
+and the agent then never abstains. **primary** produces the headline number.
+**stress** enriches the rare classes so a per-class rate rests on more than
+three cases. Neither of the latter two is inspected while tuning.
 
 <!-- STATS:START -->
 | | dev (seed 42) | holdout (seed 20260905) |
 |---|---|---|
-| Gateway rows | 500 | 500 |
-| Bank credits | 445 | 479 |
-| Truth links | 458 | 486 |
-| Truth pairs | 487 | 493 |
-| Ambiguous on amount+date | 30 / 385 | 37 / 421 |
-| **Deterministic ceiling** | **92.2%** | **91.2%** |
+| Gateway events | 500 | 500 |
+| Reconciliation cases | 100 | 100 |
+| Settlements | 98 | 98 |
+| Settlement detail lines | 454 | 456 |
+| Bank credits | 98 | 98 |
+| Refund deltas with >1 exact candidate | 0 / 8 | 0 / 8 |
+| B1 baseline (exact joins only) | 92 / 100 | 92 / 100 |
+| **Difficulty floor D** | **8.0%** | **8.0%** |
+
+Case mix by scenario:
+
+| scenario | dev (seed 42) | holdout (seed 20260905) |
+|---|---|---|
+| `CAPTURED_UNSETTLED` | 6 | 6 |
+| `CORROBORATED_REFUND` | 8 | 8 |
+| `DUPLICATE_DETAIL_EXPORT` | 8 | 8 |
+| `FEE_TAX_VARIANCE` | 6 | 6 |
+| `NOT_SETTLEABLE` | 6 | 6 |
+| `REFUND_LATER_CYCLE` | 10 | 10 |
+| `STRAIGHT_THROUGH` | 56 | 56 |
 
 <sub>Table generated by `make stats` from the data in `data/`. Do not edit by hand.</sub>
 <!-- STATS:END -->
 
-### The deterministic ceiling
+Prevalence is counted **by case, not by row**, so a scenario that multiplies
+rows (a duplicated detail export) cannot quietly inflate its own share of the
+benchmark.
 
-Around 8–9% of 1:1 settled credits have more than one indistinguishable gateway
-candidate on amount + date alone. Those cannot be resolved arithmetically —
-narration evidence is mandatory for them. That is the honest justification for
-having an LLM in the pipeline at all, and it is a measured number, not an
-assertion.
+## The difficulty floor
 
-It also sets the bar for reading any result. A match rate of 97% means one thing
-on its own and another thing next to a ~92% amount+date ceiling. Only the second
-framing survives a panel asking whether the data was trivially separable.
+Every match rate is quoted against **D**, the fraction of cases a trivial script
+cannot resolve:
+
+```
+D = 1 - (cases the baseline resolves correctly / total cases)
+```
+
+The baselines ship as **runnable code**, not as an asserted percentage
+([`src/recon/metrics/baselines.py`](src/recon/metrics/baselines.py)). A sceptic
+can run them against the released CSVs and reproduce D without trusting the
+generator. An asserted floor would be worth nothing.
+
+**B1** is allowed exact joins, signed amounts, deduplication on the detail
+primary key, fee and tax validation, every control equation, and lifecycle
+disposition. It may not read narration, attempt refund recovery, or abstain.
+
+**B2 is B1 plus exactly one rule**: attribute an anonymous refund line to any
+unconsumed refund event whose amount reproduces it exactly — no window, no
+lineage, no uniqueness test, no abstention.
+
+**D is published against B2, and that is deliberate.** B1 flatters the
+benchmark. B2 is the attack a sceptical reviewer would actually run, and running
+it here is cheaper than having it run on us. An earlier version of this benchmark
+scored B1 92/100 (D = 8.0%) and looked healthy — until B2 scored 100/100 and put
+the real floor at **zero**. The whole batch was solvable by a slightly longer SQL
+script, and a direct measurement showed the nine corroboration gates were
+eliminating no candidates at all. `CONTESTED_REFUND` exists because of that
+measurement: several unconsumed refund events share the delta amount exactly and
+only one is admissible, so the amount-lookup shortcut guesses wrong and the gates
+become load-bearing. The regression is a test
+(`test_the_benchmark_is_not_trivially_solvable`), not a memory.
+
+Scoring checks **attributions, not just outcomes**. A contested delta resolved to
+the wrong refund event still yields `RECONCILED`, so a scorer comparing outcomes
+alone would award full marks to a false match. Claimed
+`(settlement_id, event_id)` pairs are checked against
+`answer_key_allocations.csv`, and a right outcome with a wrong attribution is
+scored wrong.
+
+The result is that **D is attributable**, and this is asserted in the test suite
+rather than observed once: the baselines solve every scenario outside the
+refund-attribution axis completely. So the gap between a plain script and the
+agent is exactly one capability — attributing an anonymous refund line, or
+proving that it cannot be attributed and declining.
+
+That concentration is stated plainly because it is the obvious line of attack.
+The defence is that the two halves are different skills. `CORROBORATED_REFUND`
+and `CONTESTED_REFUND` reward *proving* a unique allocation; `AMBIGUOUS_REFUND`
+rewards *refusing* to allocate. An agent that solves the first by guessing scores
+zero on the second.
+
+## Control equations
+
+These are what the agent verifies. They hold exactly, except where a scenario
+deliberately breaks one — and then it breaks exactly the one its scenario names.
+
+```
+per detail line:   net_effect = gross_effect − fee − tax
+per summary:       net_amount = gross_payment − refund − fee − tax
+roll-up:           summary totals == sum over UNIQUE detail_id lines
+bank tie-out:      credit_amount == net_amount
+fee:               fee = round_half_up(amount × fee_rate_bps / 10000)
+tax:               tax = round_half_up(fee    × gst_rate_bps / 10000)
+```
+
+Money is **integer paise** everywhere, with `Decimal` confined to construction
+boundaries. A reconciliation engine that reports a ₹0.01 tolerance breach caused
+by its own binary-float error is worse than useless.
 
 ## Architecture
 
 ```
-Gateway ledger (CSV) ──┐
-                       ├──> 1. Normalizer (dates, currency, precision)
-Bank settlement (CSV) ─┘         │
-                                 ▼
-                    2. Exact matcher (deterministic)
-                                 │ residuals
-                                 ▼
-                    3. Fuzzy matcher (deterministic)
-                       date windows, amount tolerance,
-                       partial refunds, many-to-one settlements
-                                 │ residuals
-                                 ▼
-                    4. LLM adjudicator (ambiguous cases only)
-                       → {match_id, confidence, reasoning} or "unresolved"
-                                 │
-                                 ▼
-                    5. Exception classifier (named categories)
-                                 │
-                                 ▼
-                    6. Report + audit trail
+gateway ledger ──┐
+settlement detail ├──> 1. Normalizer            integer paise, canonical dates
+settlement summary│
+bank statement ──┘         │
+pricing rules              ▼
+                  2. Control-equation engine    line, summary, roll-up, tie-out
+                           │ residual deltas
+                           ▼
+                  3. Corroboration              nine admissibility gates;
+                     resolves a delta only when EXACTLY ONE
+                     global allocation survives all nine
+                           │ still ambiguous
+                           ▼
+                  4. LLM adjudicator            proposes which record to TEST;
+                     the deterministic engine decides whether it passes
+                           │
+                           ▼
+                  5. Exception classifier       named categories, not a total
+                           │
+                           ▼
+                  6. Report + audit trail       every decision overridable
 ```
 
-**Deterministic core, LLM at the edges.** Rules do the arithmetic; the LLM only
-handles genuine ambiguity and generates explanations. It never does arithmetic
-reconciliation.
+**Deterministic core, LLM at the edges.** The adjudicator cannot compute a sum;
+it can only ask whether one holds. That makes "no LLM arithmetic" *structural
+rather than aspirational* — the model proposes candidates, the engine rules.
+
+**Ties are never broken.** Not by frequency, not by a prior, not by batch
+history, not by model plausibility. Gate 9 — that no second candidate survives
+gates 1–8 — is what makes a resolution a proof rather than a guess. Where two
+survive, the agent abstains, because a wrong match becomes an invisible
+"resolved" line in the audit trail whereas an exception is a named problem.
 
 ## Layout
 
 ```
-src/recon/datagen/     generator, config, narration synthesis, serialisation
-tests/                 answer-key self-validation (91 checks x 4 seeds)
-tools/ambiguity.py     intrinsic ambiguity floor measurement
-docs/DATA_SPEC.md      schema, scenario classes, guarantees, limitations
-data/dev/              dev dataset (tune here)
-data/holdout/          held-out dataset (never tune here)
+src/recon/datagen/      generator, config, narration synthesis, serialisation
+src/recon/metrics/      B1 baseline, scoring harness
+tests/                  answer-key self-validation + baseline tests, 4 seeds
+tools/ambiguity.py      recovery-ambiguity measurement
+tools/refresh_stats.py  regenerates the README table from data/
+docs/DATA_SPEC.md       schema, scenario classes, guarantees, limitations
+docs/superpowers/specs/ the authoritative benchmark design record
+data/dev/               development family (the only tuning surface)
+data/primary/           headline batch      (never tune here)
+data/stress/            rare-class batch    (never tune here)
 ```
+
+Tests run across four seeds, not one. A labelling bug once passed because the
+defective case did not occur in seed 42.
 
 ## Honest limitation
 
-The held-out set is a different seed from the same generator. It measures
-whether tolerances were overfitted; it does not measure robustness to real bank
-data, because the same code wrote both the defects and their labels.
+The reported families are different seeds from the same generator. They measure
+whether tolerances were overfitted; they do **not** measure robustness to real
+bank data, because the same code wrote both the defects and their labels.
+Claiming more than that is the trap this benchmark exists to avoid.
+
+The same honesty applies to the floor above. That defect was caught by
+attacking this benchmark rather than by a reviewer finding it — but it did
+survive, unnoticed, through a version considered finished. The safeguard is
+that the attack now runs as a test, on every seed.
 
 ## License
 

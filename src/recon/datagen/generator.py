@@ -1,505 +1,1113 @@
-"""The synthetic dataset generator.
+"""Case-first generation keeps defects local and labels constructive.
 
-Design contract
----------------
-1. A dataset is a pure function of (GenConfig, seed).  Same inputs, byte-identical
-   outputs.  This is what makes "held-out seed" a meaningful claim.
-2. The answer key is *constructed alongside* the data, never inferred from it
-   afterwards.  Recovering ground truth by re-reading the CSVs would mean
-   writing a matcher to label the test set for the matcher, which is circular.
-3. Row order in both output files is shuffled.  Positional alignment between the
-   two files must never be exploitable as a matching signal.
-4. Every gateway txn and every bank credit belongs to exactly one TruthLink.
-   The self-validation suite in tests/ enforces this rather than trusting it.
+The answer key is built at the same moment as each case, never inferred from
+the exports. That makes every deliberate break reviewable in the builder that
+caused it, and makes a dataset a pure function of ``(GenConfig, seed)`` rather
+than of wall-clock time or a post-hoc matching heuristic.
 """
 
 from __future__ import annotations
 
 import random
-from dataclasses import replace
-from datetime import date, datetime, timedelta
+from dataclasses import dataclass
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 
 from .config import (
-    AmountBasis,
-    FX_RATES,
-    FX_SPREAD,
-    GST_RATE,
-    GenConfig,
+    GST_RATE_BPS,
     METHOD_FEE_RATE,
     METHOD_WEIGHTS,
     PAYMENT_METHODS,
     PRICE_POINTS,
+    SCENARIO_OUTCOMES,
+    GenConfig,
     Resolution,
     Scenario,
 )
-from .entities import BankCredit, Dataset, GatewayTxn, TruthLink, TruthPair, money
-from .narration import clean_narration, foreign_narration, garble, make_reference
+from .entities import (
+    AnswerKeyAllocation,
+    AnswerKeyCase,
+    BankStatementRow,
+    BatchConfigRow,
+    Dataset,
+    GatewayEvent,
+    PricingRule,
+    SettlementDetail,
+    SettlementSummary,
+    round_half_up,
+)
+from .narration import settlement_narration
 
 ALNUM = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-BANK_PREFIXES = ["HDFC", "ICIC", "UTIB", "KKBK", "YESB"]
+BANKS = ("HDFC", "ICICI", "AXIS", "KOTAK", "YESBANK")
+CONTESTED_DISTRACTOR_ARCHETYPES = ("GATE_1", "GATE_3", "GATE_5")
+# Later-cycle refunds cannot exceed 10,000,000 paise under the configured bands.
+# Starting just above that ceiling makes the batch-global cardinality proof
+# constructive rather than vulnerable to an unrelated random refund collision.
+CONTESTED_AMOUNT_BASE_PAISE = 10_000_100
 
-# Scenarios that need a fee-bearing method for the defect to be observable at
-# all: netting a 0% UPI fee changes nothing.
-NEEDS_FEE = {Scenario.FEE_DEDUCTION}
+
+@dataclass(frozen=True)
+class _PlanItem:
+    scenario: Scenario
+    n_events: int
+    ambiguous_group: int | None = None
+    single_ambiguous_case: bool = False
+
+
+@dataclass
+class _BuiltCase:
+    events: list[GatewayEvent]
+    details: list[SettlementDetail]
+    summaries: list[SettlementSummary]
+    bank: list[BankStatementRow]
+    allocations: list[AnswerKeyAllocation]
+    key: AnswerKeyCase
 
 
 class _IdFactory:
-    """Collision-free, seed-deterministic identifier minting."""
+    """Seed-derived identifiers prevent both collisions and cross-seed overlap."""
 
     def __init__(self, rng: random.Random) -> None:
         self._rng = rng
         self._seen: set[str] = set()
 
-    def _unique(self, make) -> str:
+    def _unique(self, prefix: str, alphabet: str = ALNUM, length: int = 14) -> str:
         for _ in range(1000):
-            candidate = make()
+            candidate = prefix + "".join(self._rng.choice(alphabet) for _ in range(length))
             if candidate not in self._seen:
                 self._seen.add(candidate)
                 return candidate
         raise RuntimeError("identifier space exhausted")
 
+    def event_id(self) -> str:
+        return self._unique("evt_")
+
     def txn_id(self) -> str:
-        return self._unique(
-            lambda: "pay_" + "".join(self._rng.choice(ALNUM) for _ in range(14))
-        )
+        return self._unique("pay_")
 
     def order_id(self) -> str:
-        return self._unique(
-            lambda: "order_" + "".join(self._rng.choice(ALNUM) for _ in range(14))
-        )
+        return self._unique("order_")
+
+    def detail_id(self) -> str:
+        return self._unique("dtl_")
+
+    def settlement_id(self) -> str:
+        return self._unique("setl_")
 
     def utr(self) -> str:
         return self._unique(
-            lambda: self._rng.choice(BANK_PREFIXES)
-            + "N"
-            + "".join(self._rng.choice("0123456789") for _ in range(11))
+            self._rng.choice(("HDFC", "ICIC", "UTIB", "KKBK", "YESB")) + "N",
+            "0123456789",
+            11,
         )
+
+    def bank_row_id(self) -> str:
+        return self._unique("bank_")
 
     def bank_ref(self) -> str:
-        return self._unique(
-            lambda: "S" + "".join(self._rng.choice("0123456789") for _ in range(10))
-        )
-
-    def batch_ref(self) -> str:
-        return self._unique(
-            lambda: "BATCH"
-            + "".join(self._rng.choice("0123456789") for _ in range(8))
-        )
+        return self._unique("S", "0123456789", 10)
 
 
 class Generator:
+    """Build every artifact from a single private seeded random stream."""
+
     def __init__(self, config: GenConfig | None = None) -> None:
         self.cfg = config or GenConfig()
         self.rng = random.Random(self.cfg.seed)
         self.ids = _IdFactory(self.rng)
-        self._link_seq = 0
+        self._case_seq = 0
+        self._corroborated_seq = 0
+        self._contested_seq = 0
+        self._contested_gate3_seq = 0
 
-    # ---------- primitive draws ----------
+    # ---------- deterministic planning ----------
 
-    def _next_link_id(self) -> str:
-        self._link_seq += 1
-        return f"L{self._link_seq:05d}"
+    def _case_count(self) -> int:
+        target = (self.cfg.n_records + 2) // 5
+        minimum = (self.cfg.n_records + 6) // 7
+        maximum = self.cfg.n_records // 3
+        return min(max(target, minimum), maximum)
 
-    def _draw_amount(self) -> Decimal:
-        """Draw a gross ticket amount.
+    def _scenario_counts(self, n_cases: int) -> list[tuple[Scenario, int]]:
+        apportioned: list[list[object]] = []
+        assigned = 0
+        for index, (scenario, share) in enumerate(self.cfg.case_shares):
+            scaled = n_cases * share
+            count = scaled // 100
+            apportioned.append([scenario, count, scaled % 100, index])
+            assigned += count
 
-        Deliberately bimodal: a catalogue price point most of the time, a
-        continuous draw otherwise.  See PRICE_POINTS in config.py for why the
-        clustering is load-bearing rather than cosmetic.
-        """
+        missing = n_cases - assigned
+        order = sorted(
+            range(len(apportioned)),
+            key=lambda i: (-int(apportioned[i][2]), int(apportioned[i][3])),
+        )
+        for index in order[:missing]:
+            apportioned[index][1] = int(apportioned[index][1]) + 1
+        return [(row[0], int(row[1])) for row in apportioned]  # type: ignore[misc]
+
+    def _plan(self) -> list[_PlanItem]:
+        scenarios = [
+            scenario
+            for scenario, count in self._scenario_counts(self._case_count())
+            for _ in range(count)
+        ]
+        self.rng.shuffle(scenarios)
+
+        ambiguous_indexes = [
+            index for index, scenario in enumerate(scenarios)
+            if scenario is Scenario.AMBIGUOUS_REFUND
+        ]
+        ambiguous_groups: dict[int, int] = {}
+        for ordinal, index in enumerate(ambiguous_indexes):
+            if len(ambiguous_indexes) > 1 and len(ambiguous_indexes) % 2 and ordinal == len(ambiguous_indexes) - 1:
+                group = (ordinal - 1) // 2
+            else:
+                group = ordinal // 2
+            ambiguous_groups[index] = group
+
+        minimum_sizes = []
+        for scenario in scenarios:
+            if scenario is Scenario.CONTESTED_REFUND:
+                # Five rows leave room for two refund candidates, settled
+                # lineage, a positive target settlement, and a gate-5 parent.
+                minimum_sizes.append(5)
+            elif scenario is Scenario.AMBIGUOUS_REFUND and len(ambiguous_indexes) == 1:
+                minimum_sizes.append(4)
+            else:
+                minimum_sizes.append(3)
+        remaining = self.cfg.n_records - sum(minimum_sizes)
+        if remaining < 0:
+            raise ValueError("record budget cannot satisfy the 3-7 event case contract")
+
+        sizes = list(minimum_sizes)
+        while remaining:
+            candidates = [index for index, size in enumerate(sizes) if size < 7]
+            if not candidates:
+                raise ValueError("record budget exceeds the 3-7 event case contract")
+            sizes[self.rng.choice(candidates)] += 1
+            remaining -= 1
+
+        return [
+            _PlanItem(
+                scenario=scenario,
+                n_events=sizes[index],
+                ambiguous_group=ambiguous_groups.get(index),
+                single_ambiguous_case=(len(ambiguous_indexes) == 1),
+            )
+            for index, scenario in enumerate(scenarios)
+        ]
+
+    # ---------- primitive construction ----------
+
+    def _next_case_id(self) -> str:
+        self._case_seq += 1
+        return f"case_{self._case_seq:05d}"
+
+    def _draw_amount_paise(self) -> int:
+        """Draw money as paise; float draws select distributions, never values."""
         if self.rng.random() < self.cfg.price_point_share:
-            return money(self.rng.choice(PRICE_POINTS))
-        bands = self.cfg.amount_bands
-        lo, hi, _ = self.rng.choices(bands, weights=[b[2] for b in bands])[0]
-        raw = self.rng.uniform(lo, hi)
-        if self.rng.random() < 0.60:            # most real prices are whole rupees
-            return money(Decimal(int(raw)))
-        return money(Decimal(f"{raw:.2f}"))
+            return int(self.rng.choice(PRICE_POINTS) * Decimal(100))
+        band = self.rng.choices(
+            self.cfg.amount_bands,
+            weights=[candidate[2] for candidate in self.cfg.amount_bands],
+        )[0]
+        lo_rupees, hi_rupees, _ = band
+        if self.rng.random() < 0.60:
+            return self.rng.randint(lo_rupees, hi_rupees) * 100
+        return self.rng.randint(lo_rupees * 100, hi_rupees * 100)
 
-    def _draw_method(self, needs_fee: bool = False) -> str:
-        if needs_fee:
-            options = [m for m in PAYMENT_METHODS if METHOD_FEE_RATE[m] > 0]
-            weights = [METHOD_WEIGHTS[PAYMENT_METHODS.index(m)] for m in options]
-            return self.rng.choices(options, weights=weights)[0]
+    def _draw_method(self) -> str:
         return self.rng.choices(PAYMENT_METHODS, weights=METHOD_WEIGHTS)[0]
 
     def _draw_created_at(self) -> datetime:
-        day = self.cfg.start_date + timedelta(
-            days=self.rng.randrange(self.cfg.horizon_days)
-        )
-        return datetime(
-            day.year, day.month, day.day,
-            self.rng.randrange(0, 24), self.rng.randrange(0, 60), self.rng.randrange(0, 60),
+        day = self.cfg.start_date + timedelta(days=self.rng.randrange(self.cfg.horizon_days))
+        return datetime.combine(
+            day,
+            time(
+                self.rng.randrange(0, 24),
+                self.rng.randrange(0, 60),
+                self.rng.randrange(0, 60),
+            ),
         )
 
-    def _settle_date(self, created: datetime, lag_days: int) -> date:
-        d = created.date() + timedelta(days=lag_days)
+    def _settled_at(self, created_at: datetime, lag_days: int | None = None) -> datetime:
+        lag = self.cfg.standard_lag_days if lag_days is None else lag_days
+        day = created_at.date() + timedelta(days=lag)
         if self.cfg.skip_weekend_settlement:
-            while d.weekday() == 6:             # banks do not run Sunday batches
-                d += timedelta(days=1)
-        return d
+            while day.weekday() == 6:
+                day += timedelta(days=1)
+        return datetime.combine(day, time(11, 30))
 
-    # ---------- record construction ----------
+    def _fees(self, amount_paise: int, method: str) -> tuple[int, int]:
+        fee = round_half_up(amount_paise * METHOD_FEE_RATE[method], 10_000)
+        tax = round_half_up(fee * GST_RATE_BPS, 10_000)
+        return fee, tax
 
-    def _make_txn(
+    def _payment(
         self,
         *,
-        scenario: Scenario,
-        currency: str = "INR",
-        status: str = "captured",
-        created_at: datetime | None = None,
-    ) -> GatewayTxn:
-        method = self._draw_method(needs_fee=scenario in NEEDS_FEE)
-        amount = self._draw_amount()
-        if currency != "INR":
-            # Foreign-currency tickets are denominated in the foreign unit, so
-            # scale the INR-shaped draw down into a plausible range.
-            amount = money(amount / FX_RATES[currency])
-        fee = money(amount * METHOD_FEE_RATE[method])
-        tax = money(fee * GST_RATE)
-        return GatewayTxn(
+        created_at: datetime,
+        status: str = "PROCESSED",
+        amount_paise: int | None = None,
+        method: str | None = None,
+    ) -> GatewayEvent:
+        return GatewayEvent(
+            event_id=self.ids.event_id(),
+            event_type="PAYMENT",
             txn_id=self.ids.txn_id(),
             order_id=self.ids.order_id(),
-            amount=amount,
-            currency=currency,
+            amount_paise=amount_paise if amount_paise is not None else self._draw_amount_paise(),
+            currency="INR",
             status=status,
-            created_at=created_at or self._draw_created_at(),
-            method=method,
-            fee=fee,
-            tax=tax,
-            net_amount=money(amount - fee - tax),
-            refund_amount=money(Decimal(0)),
+            created_at=created_at,
+            method=method or self._draw_method(),
         )
 
-    def _basis_amount(self, txn: GatewayTxn, basis: AmountBasis) -> Decimal:
-        if basis is AmountBasis.NET:
-            return txn.net_amount
-        if basis is AmountBasis.GROSS:
-            return txn.amount
-        return money(txn.amount - txn.fee)
-
-    def _to_inr(self, txn: GatewayTxn, amount: Decimal) -> tuple[Decimal, Decimal | None]:
-        """Convert a settle-basis amount into the INR the bank actually credits."""
-        if txn.currency == "INR":
-            return money(amount), None
-        rate = money(FX_RATES[txn.currency] * (Decimal(1) - FX_SPREAD))
-        return money(amount * rate), rate
-
-    def _make_credit(
+    def _refund(
         self,
+        parent: GatewayEvent,
         *,
-        inr_amount: Decimal,
-        settlement_date: date,
-        narration: str,
-    ) -> BankCredit:
-        return BankCredit(
-            utr=self.ids.utr(),
-            settlement_date=settlement_date,
-            credit_amount=money(inr_amount),
-            narration=narration,
-            bank_ref=self.ids.bank_ref(),
+        amount_paise: int,
+        created_at: datetime,
+    ) -> GatewayEvent:
+        return GatewayEvent(
+            event_id=self.ids.event_id(),
+            event_type="REFUND",
+            txn_id=parent.txn_id,
+            order_id=parent.order_id,
+            amount_paise=amount_paise,
+            currency=parent.currency,
+            status="PROCESSED",
+            created_at=created_at,
+            method=parent.method,
         )
 
-    # ---------- scenario builders ----------
-    # Each returns (txns, credits, link).  The link is the ground truth; nothing
-    # downstream may re-derive it from the records.
-
-    def _simple_settled(
+    def _detail(
         self,
-        scenario: Scenario,
+        event: GatewayEvent,
+        settlement_id: str,
+        settled_at: datetime,
         *,
-        lag: int | None = None,
-        basis: AmountBasis = AmountBasis.NET,
-        currency: str = "INR",
-        rounding_delta: Decimal = Decimal("0"),
-        garbled: bool = False,
-    ) -> tuple[list[GatewayTxn], list[BankCredit], TruthLink]:
-        txn = self._make_txn(scenario=scenario, currency=currency)
-        basis_amount = self._basis_amount(txn, basis)
-        expected_inr, rate = self._to_inr(txn, basis_amount)
-        actual_inr = money(expected_inr + rounding_delta)
-
-        lag_days = self.cfg.standard_lag_days if lag is None else lag
-        settle_on = self._settle_date(txn.created_at, lag_days)
-
-        ref = make_reference(txn.order_id)
-        narration = clean_narration(self.rng, ref)
-        recoverable = True
-        if garbled:
-            narration, recoverable = garble(self.rng, narration, ref)
-
-        credit = self._make_credit(
-            inr_amount=actual_inr, settlement_date=settle_on, narration=narration
+        anonymous: bool = False,
+        variance: str | None = None,
+    ) -> SettlementDetail:
+        fee, tax = self._fees(event.amount_paise, event.method)
+        if variance == "fee":
+            fee += 100
+            tax = round_half_up(fee * GST_RATE_BPS, 10_000)
+        elif variance == "tax":
+            tax += 1
+        gross = event.amount_paise if event.event_type == "PAYMENT" else -event.amount_paise
+        return SettlementDetail(
+            detail_id=self.ids.detail_id(),
+            settlement_id=settlement_id,
+            event_id=None if anonymous else event.event_id,
+            line_type=event.event_type,
+            gross_effect_paise=gross,
+            fee_paise=fee,
+            tax_paise=tax,
+            net_effect_paise=gross - fee - tax,
+            settled_at=settled_at,
+            currency=event.currency,
+            reference_text=None,
         )
 
-        notes = []
-        if lag_days != self.cfg.standard_lag_days:
-            notes.append(f"settlement lag T+{lag_days}")
-        if rounding_delta:
-            notes.append(f"rounding delta {rounding_delta:+.2f}")
-        if rate is not None:
-            notes.append(f"fx {txn.currency}->INR @ {rate}")
-        if garbled:
-            notes.append(
-                f"narration garbled; reference {'recoverable' if recoverable else 'destroyed'}"
+    def _summary(
+        self,
+        settlement_id: str,
+        utr: str,
+        settled_at: datetime,
+        details: list[SettlementDetail],
+    ) -> SettlementSummary:
+        unique: list[SettlementDetail] = []
+        seen: set[str] = set()
+        for detail in details:
+            if detail.detail_id not in seen:
+                seen.add(detail.detail_id)
+                unique.append(detail)
+
+        gross_payment = sum(
+            detail.gross_effect_paise for detail in unique if detail.line_type == "PAYMENT"
+        )
+        refund = -sum(
+            detail.gross_effect_paise for detail in unique if detail.line_type == "REFUND"
+        )
+        fee = sum(detail.fee_paise for detail in unique)
+        tax = sum(detail.tax_paise for detail in unique)
+        return SettlementSummary(
+            settlement_id=settlement_id,
+            utr=utr,
+            settlement_date=settled_at.date(),
+            gross_payment_paise=gross_payment,
+            refund_paise=refund,
+            fee_paise=fee,
+            tax_paise=tax,
+            net_amount_paise=gross_payment - refund - fee - tax,
+            line_count=len(unique),
+            currency="INR",
+            status="PROCESSED",
+        )
+
+    def _bank_rows(self, summary: SettlementSummary, count: int) -> list[BankStatementRow]:
+        rows: list[BankStatementRow] = []
+        for _ in range(count):
+            bank = self.rng.choice(BANKS)
+            rows.append(
+                BankStatementRow(
+                    bank_row_id=self.ids.bank_row_id(),
+                    utr=summary.utr,
+                    posted_at=datetime.combine(summary.settlement_date, time(14, 30)),
+                    credit_amount_paise=summary.net_amount_paise,
+                    currency=summary.currency,
+                    narration=settlement_narration(bank, summary.utr),
+                    bank_ref=self.ids.bank_ref(),
+                )
             )
+        return rows
 
-        link = TruthLink(
-            link_id=self._next_link_id(),
+    def _settlement(
+        self,
+        events: list[GatewayEvent],
+        settled_at: datetime,
+        *,
+        anonymous_event_ids: set[str] | None = None,
+        duplicate_export: bool = False,
+        variance_event_id: str | None = None,
+        bank_count: int = 1,
+    ) -> tuple[list[SettlementDetail], SettlementSummary, list[BankStatementRow]]:
+        settlement_id = self.ids.settlement_id()
+        anonymous_ids = anonymous_event_ids or set()
+        variance_kind = self.rng.choice(("fee", "tax")) if variance_event_id else None
+        details = [
+            self._detail(
+                event,
+                settlement_id,
+                settled_at,
+                anonymous=event.event_id in anonymous_ids,
+                variance=variance_kind if event.event_id == variance_event_id else None,
+            )
+            for event in events
+        ]
+        unique_details = list(details)
+        if duplicate_export:
+            duplicate_count = min(2, len(unique_details))
+            details.extend(unique_details[:duplicate_count])
+        utr = self.ids.utr()
+        summary = self._summary(settlement_id, utr, settled_at, details)
+        return details, summary, self._bank_rows(summary, bank_count)
+
+    @staticmethod
+    def _allocations(
+        event_ids: list[str],
+        summary: SettlementSummary,
+        bank_rows: list[BankStatementRow],
+    ) -> list[AnswerKeyAllocation]:
+        if not bank_rows:
+            return [
+                AnswerKeyAllocation(event_id, summary.settlement_id, None)
+                for event_id in event_ids
+            ]
+        return [
+            AnswerKeyAllocation(event_id, summary.settlement_id, bank.bank_row_id)
+            for event_id in event_ids
+            for bank in bank_rows
+        ]
+
+    @staticmethod
+    def _category(scenario: Scenario) -> str | None:
+        categories = {
+            Scenario.DUPLICATE_DETAIL_EXPORT: "DUPLICATE_DETAIL_EXPORT_WARNING",
+            Scenario.CAPTURED_UNSETTLED: "CAPTURED_UNSETTLED",
+            Scenario.FEE_TAX_VARIANCE: "FEE_TAX_VARIANCE",
+            Scenario.BANK_CREDIT_MISSING: "BANK_CREDIT_MISSING",
+            Scenario.BANK_CREDIT_DUPLICATE: "BANK_CREDIT_DUPLICATE",
+            Scenario.AMBIGUOUS_REFUND: "AMBIGUOUS_REFUND",
+        }
+        return categories.get(scenario)
+
+    def _key(
+        self,
+        case_id: str,
+        scenario: Scenario,
+        events: list[GatewayEvent],
+        summaries: list[SettlementSummary],
+        bank: list[BankStatementRow],
+        notes: str,
+    ) -> AnswerKeyCase:
+        return AnswerKeyCase(
+            case_id=case_id,
             scenario=scenario,
-            resolution=Resolution.AUTO_MATCH,
-            txn_ids=[txn.txn_id],
-            utrs=[credit.utr],
-            amount_basis=basis,
-            expected_inr_total=expected_inr,
-            actual_inr_total=actual_inr,
-            notes="; ".join(notes),
+            expected_outcome=SCENARIO_OUTCOMES[scenario],
+            settlement_ids=tuple(summary.settlement_id for summary in summaries),
+            bank_row_ids=tuple(row.bank_row_id for row in bank),
+            event_ids=tuple(event.event_id for event in events),
+            expected_exception_category=self._category(scenario),
+            notes=notes,
         )
-        return [txn], [credit], link
 
-    def _many_to_one(self, k: int):
-        capture_day = self._draw_created_at()
-        txns = [
-            self._make_txn(
-                scenario=Scenario.MANY_TO_ONE,
-                created_at=capture_day.replace(
-                    hour=self.rng.randrange(0, 24), minute=self.rng.randrange(0, 60)
+    # ---------- case builders ----------
+
+    def _ordinary_case(self, case_id: str, scenario: Scenario, n_events: int) -> _BuiltCase:
+        created_at = self._draw_created_at()
+        events = [self._payment(created_at=created_at) for _ in range(n_events)]
+        duplicate_export = scenario is Scenario.DUPLICATE_DETAIL_EXPORT
+        variance_id = events[0].event_id if scenario is Scenario.FEE_TAX_VARIANCE else None
+        bank_count = 0 if scenario is Scenario.BANK_CREDIT_MISSING else 1
+        if scenario is Scenario.BANK_CREDIT_DUPLICATE:
+            bank_count = 2
+        details, summary, bank = self._settlement(
+            events,
+            self._settled_at(created_at),
+            duplicate_export=duplicate_export,
+            variance_event_id=variance_id,
+            bank_count=bank_count,
+        )
+        allocations = self._allocations([event.event_id for event in events], summary, bank)
+        notes = {
+            Scenario.STRAIGHT_THROUGH: "all identifiers and control totals tie",
+            Scenario.DUPLICATE_DETAIL_EXPORT: (
+                "repeated detail_id rows are export duplicates; unique-id roll-up ties"
+            ),
+            Scenario.FEE_TAX_VARIANCE: (
+                "one detail line violates exactly one pricing-rule equation"
+            ),
+            Scenario.BANK_CREDIT_MISSING: "settlement exists but has no bank row",
+            Scenario.BANK_CREDIT_DUPLICATE: "the settlement UTR appears in two bank rows",
+        }[scenario]
+        return _BuiltCase(
+            events,
+            details,
+            [summary],
+            bank,
+            allocations,
+            self._key(case_id, scenario, events, [summary], bank, notes),
+        )
+
+    def _refund_later_case(self, case_id: str, n_events: int) -> _BuiltCase:
+        created_at = self._draw_created_at()
+        parent = self._payment(
+            created_at=created_at,
+            amount_paise=max(self._draw_amount_paise(), 100_000),
+        )
+        later_created = created_at + timedelta(days=2)
+        later_payments = [
+            self._payment(
+                created_at=later_created,
+                amount_paise=(
+                    max(self._draw_amount_paise(), 100_000)
+                    if index == 0 else self._draw_amount_paise()
                 ),
             )
-            for _ in range(k)
+            for index in range(n_events - 2)
         ]
-        total = money(sum((t.net_amount for t in txns), Decimal(0)))
-        settle_on = self._settle_date(capture_day, self.cfg.standard_lag_days)
-        credit = self._make_credit(
-            inr_amount=total,
-            settlement_date=settle_on,
-            narration=clean_narration(self.rng, self.ids.batch_ref(), batch=True),
+        refund_amount = max(
+            5_000,
+            min(parent.amount_paise, later_payments[0].amount_paise) // 4,
         )
-        link = TruthLink(
-            link_id=self._next_link_id(),
-            scenario=Scenario.MANY_TO_ONE,
-            resolution=Resolution.AUTO_MATCH,
-            txn_ids=[t.txn_id for t in txns],
-            utrs=[credit.utr],
-            amount_basis=AmountBasis.NET,
-            expected_inr_total=total,
-            actual_inr_total=total,
-            notes=f"batch settlement of {k} txns; narration carries no per-txn reference",
-        )
-        return txns, [credit], link
+        refund = self._refund(parent, amount_paise=refund_amount, created_at=later_created)
+        events = [parent, refund, *later_payments]
 
-    def _duplicate_settlement(self):
-        txn = self._make_txn(scenario=Scenario.DUPLICATE_SETTLEMENT)
-        ref = make_reference(txn.order_id)
-        first_date = self._settle_date(txn.created_at, self.cfg.standard_lag_days)
-        second_date = self._settle_date(txn.created_at, self.cfg.standard_lag_days + self.rng.randint(0, 2))
-        credits = [
-            self._make_credit(
-                inr_amount=txn.net_amount,
-                settlement_date=d,
-                narration=clean_narration(self.rng, ref),
+        first = self._settlement([parent], self._settled_at(created_at))
+        second_events = [refund, *later_payments]
+        second = self._settlement(second_events, self._settled_at(later_created))
+        details = [*first[0], *second[0]]
+        summaries = [first[1], second[1]]
+        bank = [*first[2], *second[2]]
+        allocations = [
+            *self._allocations([parent.event_id], first[1], first[2]),
+            *self._allocations([event.event_id for event in second_events], second[1], second[2]),
+        ]
+        key = self._key(
+            case_id,
+            Scenario.REFUND_LATER_CYCLE,
+            events,
+            summaries,
+            bank,
+            "refund settles in the next cycle, after its parent payment",
+        )
+        return _BuiltCase(events, details, summaries, bank, allocations, key)
+
+    def _corroborated_refund_case(self, case_id: str, n_events: int) -> _BuiltCase:
+        created_at = self._draw_created_at()
+        recovery_amount = 100 + self._corroborated_seq
+        self._corroborated_seq += 1
+        parent = self._payment(
+            created_at=created_at,
+            amount_paise=max(self._draw_amount_paise(), recovery_amount * 4, 5_000),
+            method="upi",
+        )
+        refund = self._refund(
+            parent,
+            amount_paise=recovery_amount,
+            created_at=created_at + timedelta(hours=1),
+        )
+        extras = [self._payment(created_at=created_at) for _ in range(n_events - 2)]
+        events = [parent, refund, *extras]
+        details, summary, bank = self._settlement(
+            [parent, *extras, refund],
+            self._settled_at(created_at),
+            anonymous_event_ids={refund.event_id},
+        )
+        allocations = self._allocations([event.event_id for event in events], summary, bank)
+        key = self._key(
+            case_id,
+            Scenario.CORROBORATED_REFUND,
+            events,
+            [summary],
+            bank,
+            "anonymous refund line has exactly one globally admissible event",
+        )
+        return _BuiltCase(events, details, [summary], bank, allocations, key)
+
+    def _draw_contested_archetypes(self, n_events: int) -> list[str]:
+        """Keep all three gates observable without making the remaining mix cyclic."""
+        required = CONTESTED_DISTRACTOR_ARCHETYPES[
+            self._contested_seq % len(CONTESTED_DISTRACTOR_ARCHETYPES)
+        ]
+        for _ in range(100):
+            candidate_count = self.rng.randint(2, min(4, n_events - 2))
+            archetypes = [required]
+            archetypes.extend(
+                self.rng.choice(CONTESTED_DISTRACTOR_ARCHETYPES)
+                for _ in range(candidate_count - 2)
             )
-            for d in (first_date, second_date)
+            captured_parent_rows = int("GATE_5" in archetypes)
+            if candidate_count + 2 + captured_parent_rows <= n_events:
+                return archetypes
+        raise RuntimeError("could not draw a contested-refund shape within its event budget")
+
+    def _failed_recovery_gates_135(
+        self,
+        event: GatewayEvent,
+        settlement_date: date,
+        referenced_event_ids: set[str],
+        payments_by_txn: dict[str, list[GatewayEvent]],
+    ) -> set[str]:
+        """Name failures so a distractor is evidence, not just generator intent."""
+        failures: set[str] = set()
+        if event.event_id in referenced_event_ids:
+            failures.add("GATE_1")
+        age = (settlement_date - event.created_at.date()).days
+        if not 0 <= age <= self.cfg.recovery_window_days:
+            failures.add("GATE_3")
+        parent_settled = any(
+            parent.status == "PROCESSED" and parent.event_id in referenced_event_ids
+            for parent in payments_by_txn[event.txn_id]
+        )
+        if not parent_settled:
+            failures.add("GATE_5")
+        return failures
+
+    def _assert_contested_draw(
+        self,
+        *,
+        recovery_amount: int,
+        admissible: GatewayEvent,
+        distractors: list[tuple[GatewayEvent, str]],
+        events: list[GatewayEvent],
+        details: list[SettlementDetail],
+        target: SettlementSummary,
+        allocations: list[AnswerKeyAllocation],
+    ) -> None:
+        """Reject a label if observable gates do not prove exactly one allocation."""
+        referenced = {detail.event_id for detail in details if detail.event_id is not None}
+        payments_by_txn: dict[str, list[GatewayEvent]] = {}
+        for event in events:
+            if event.event_type == "PAYMENT":
+                payments_by_txn.setdefault(event.txn_id, []).append(event)
+
+        amount_candidates = [
+            event
+            for event in events
+            if event.event_type == "REFUND" and event.amount_paise == recovery_amount
         ]
-        link = TruthLink(
-            link_id=self._next_link_id(),
-            scenario=Scenario.DUPLICATE_SETTLEMENT,
-            resolution=Resolution.EXCEPTION_DUPLICATE,
-            txn_ids=[txn.txn_id],
-            utrs=[c.utr for c in credits],
-            amount_basis=AmountBasis.NET,
-            expected_inr_total=txn.net_amount,
-            actual_inr_total=money(txn.net_amount * 2),
-            notes="settled twice; agent must link both credits AND flag the overpayment",
+        assert 2 <= len(amount_candidates) <= 4
+        survivors = [
+            event
+            for event in amount_candidates
+            if not self._failed_recovery_gates_135(
+                event,
+                target.settlement_date,
+                referenced,
+                payments_by_txn,
+            )
+        ]
+        assert [event.event_id for event in survivors] == [admissible.event_id]
+
+        for event, label in distractors:
+            named_gate = "_".join(label.split("_")[:2])
+            failures = self._failed_recovery_gates_135(
+                event,
+                target.settlement_date,
+                referenced,
+                payments_by_txn,
+            )
+            assert failures == {named_gate}, (event.event_id, label, failures)
+
+        allocated_event_ids = {allocation.event_id for allocation in allocations}
+        admissible_allocations = [
+            allocation
+            for allocation in allocations
+            if allocation.event_id == admissible.event_id
+        ]
+        assert admissible_allocations
+        assert {
+            allocation.settlement_id for allocation in admissible_allocations
+        } == {target.settlement_id}
+        assert not {
+            event.event_id for event, _ in distractors
+        } & allocated_event_ids
+
+    def _contested_refund_case(self, case_id: str, n_events: int) -> _BuiltCase:
+        archetypes = self._draw_contested_archetypes(n_events)
+        recovery_amount = CONTESTED_AMOUNT_BASE_PAISE + self._contested_seq
+        self._contested_seq += 1
+
+        target_clock = self._settled_at(self._draw_created_at())
+        target_date = target_clock.date()
+        admissible_at = datetime.combine(
+            target_date - timedelta(days=self.rng.randint(0, self.cfg.recovery_window_days)),
+            time(9, 0),
         )
-        return [txn], credits, link
 
-    def _missing_on_bank(self):
-        txn = self._make_txn(scenario=Scenario.MISSING_ON_BANK)
-        link = TruthLink(
-            link_id=self._next_link_id(),
-            scenario=Scenario.MISSING_ON_BANK,
-            resolution=Resolution.EXCEPTION_UNSETTLED,
-            txn_ids=[txn.txn_id],
-            utrs=[],
-            amount_basis=AmountBasis.NET,
-            expected_inr_total=txn.net_amount,
-            actual_inr_total=None,
-            notes="captured but never settled; true exception",
+        distractor_specs: list[tuple[str, str, datetime]] = []
+        for archetype in archetypes:
+            if archetype == "GATE_1":
+                created_at = datetime.combine(
+                    target_date
+                    - timedelta(days=self.rng.randint(0, self.cfg.recovery_window_days)),
+                    time(9, 15),
+                )
+                label = "GATE_1_CONSUMED"
+            elif archetype == "GATE_3":
+                if self._contested_gate3_seq % 2 == 0:
+                    created_at = datetime.combine(
+                        target_date
+                        - timedelta(
+                            days=self.cfg.recovery_window_days + self.rng.randint(1, 3)
+                        ),
+                        time(9, 30),
+                    )
+                    label = "GATE_3_TOO_OLD"
+                else:
+                    created_at = datetime.combine(
+                        target_date + timedelta(days=self.rng.randint(1, 3)),
+                        time(9, 30),
+                    )
+                    label = "GATE_3_AFTER_SETTLEMENT"
+                self._contested_gate3_seq += 1
+            else:
+                created_at = datetime.combine(
+                    target_date
+                    - timedelta(days=self.rng.randint(0, self.cfg.recovery_window_days)),
+                    time(9, 45),
+                )
+                label = "GATE_5_BROKEN_LINEAGE"
+            distractor_specs.append((archetype, label, created_at))
+
+        settled_lineage_times = [admissible_at]
+        settled_lineage_times.extend(
+            created_at
+            for archetype, _, created_at in distractor_specs
+            if archetype != "GATE_5"
         )
-        return [txn], [], link
-
-    def _missing_on_gateway(self):
-        credit = self._make_credit(
-            inr_amount=self._draw_amount(),
-            settlement_date=self._settle_date(self._draw_created_at(), 0),
-            narration=foreign_narration(self.rng),
+        parent = self._payment(
+            created_at=min(settled_lineage_times) - timedelta(days=1),
+            amount_paise=(len(archetypes) + 3) * recovery_amount,
+            method="upi",
         )
-        link = TruthLink(
-            link_id=self._next_link_id(),
-            scenario=Scenario.MISSING_ON_GATEWAY,
-            resolution=Resolution.EXCEPTION_UNEXPLAINED_CREDIT,
-            txn_ids=[],
-            utrs=[credit.utr],
-            amount_basis=None,
-            expected_inr_total=None,
-            actual_inr_total=credit.credit_amount,
-            notes="credit with no gateway counterpart; true exception",
+        admissible = self._refund(
+            parent,
+            amount_paise=recovery_amount,
+            created_at=admissible_at,
         )
-        return [], [credit], link
 
-    def _partial_refund(self):
-        txn = self._make_txn(scenario=Scenario.PARTIAL_REFUND, status="partially_refunded")
-        lo, hi = self.cfg.partial_refund_fraction
-        refund = money(txn.amount * Decimal(str(self.rng.uniform(lo, hi))))
-        txn = replace(txn, refund_amount=refund)
-        settled = money(txn.net_amount - refund)
-        settle_on = self._settle_date(txn.created_at, self.cfg.standard_lag_days)
-        credit = self._make_credit(
-            inr_amount=settled,
-            settlement_date=settle_on,
-            narration=clean_narration(self.rng, make_reference(txn.order_id)),
+        captured_parent: GatewayEvent | None = None
+        gate5_times = [
+            created_at
+            for archetype, _, created_at in distractor_specs
+            if archetype == "GATE_5"
+        ]
+        if gate5_times:
+            captured_parent = self._payment(
+                created_at=min(gate5_times) - timedelta(days=1),
+                status="CAPTURED",
+                amount_paise=(len(gate5_times) + 2) * recovery_amount,
+                method="upi",
+            )
+
+        distractors: list[tuple[GatewayEvent, str]] = []
+        for archetype, label, created_at in distractor_specs:
+            lineage = captured_parent if archetype == "GATE_5" else parent
+            assert lineage is not None
+            distractors.append(
+                (
+                    self._refund(
+                        lineage,
+                        amount_paise=recovery_amount,
+                        created_at=created_at,
+                    ),
+                    label,
+                )
+            )
+
+        carrier = self._payment(
+            created_at=datetime.combine(target_date - timedelta(days=1), time(8, 0)),
+            amount_paise=3 * recovery_amount,
+            method="upi",
         )
-        link = TruthLink(
-            link_id=self._next_link_id(),
-            scenario=Scenario.PARTIAL_REFUND,
-            resolution=Resolution.AUTO_MATCH,
-            txn_ids=[txn.txn_id],
-            utrs=[credit.utr],
-            amount_basis=AmountBasis.NET,
-            expected_inr_total=settled,
-            actual_inr_total=settled,
-            notes=f"partial refund of {refund:.2f} deducted before settlement",
+        used_rows = 2 + 1 + len(distractors) + int(captured_parent is not None)
+        extras = [
+            self._payment(created_at=carrier.created_at)
+            for _ in range(n_events - used_rows)
+        ]
+
+        target_events = [carrier, *extras, admissible]
+        target_details, target_summary, target_bank = self._settlement(
+            target_events,
+            target_clock,
+            anonymous_event_ids={admissible.event_id},
         )
-        return [txn], [credit], link
-
-    def _not_settleable(self):
-        status = self.rng.choice(["failed", "created"])
-        txn = self._make_txn(scenario=Scenario.NOT_SETTLEABLE, status=status)
-        link = TruthLink(
-            link_id=self._next_link_id(),
-            scenario=Scenario.NOT_SETTLEABLE,
-            resolution=Resolution.NO_ACTION,
-            txn_ids=[txn.txn_id],
-            utrs=[],
-            amount_basis=None,
-            expected_inr_total=None,
-            actual_inr_total=None,
-            notes=f"status={status}; never settleable, must NOT be reported as an exception",
+        gate1_refunds = [
+            event for event, label in distractors if label == "GATE_1_CONSUMED"
+        ]
+        support_events = [parent, *gate1_refunds]
+        support_details, support_summary, support_bank = self._settlement(
+            support_events,
+            target_clock,
         )
-        return [txn], [], link
 
-    # ---------- orchestration ----------
+        events = [
+            parent,
+            carrier,
+            admissible,
+            *(event for event, _ in distractors),
+            *([captured_parent] if captured_parent is not None else []),
+            *extras,
+        ]
+        details = [*target_details, *support_details]
+        summaries = [target_summary, support_summary]
+        bank = [*target_bank, *support_bank]
+        allocations = [
+            *self._allocations(
+                [event.event_id for event in target_events],
+                target_summary,
+                target_bank,
+            ),
+            *self._allocations([parent.event_id], support_summary, support_bank),
+        ]
+        self._assert_contested_draw(
+            recovery_amount=recovery_amount,
+            admissible=admissible,
+            distractors=distractors,
+            events=events,
+            details=details,
+            target=target_summary,
+            allocations=allocations,
+        )
 
-    def _plan(self) -> list[tuple[Scenario, int]]:
-        """Choose the sequence of cases and how many gateway txns each consumes."""
-        cfg = self.cfg
-        defects = list(cfg.defect_weights.keys())
-        weights = [cfg.defect_weights[s] for s in defects]
-        total_w = sum(weights)
+        labels = "|".join(
+            f"{event.event_id}:{label}" for event, label in distractors
+        )
+        key = self._key(
+            case_id,
+            Scenario.CONTESTED_REFUND,
+            events,
+            summaries,
+            bank,
+            (
+                "amount collision resolves uniquely after gates 1, 3, and 5; "
+                f"target={target_summary.settlement_id}; distractors={labels}"
+            ),
+        )
+        return _BuiltCase(events, details, summaries, bank, allocations, key)
 
-        share = cfg.defect_weights.get(Scenario.MISSING_ON_GATEWAY, 0.0) / total_w
-        max_unexplained = max(1, round(cfg.n_records * cfg.defect_rate * share))
+    def _ambiguous_time(self, group: int) -> datetime:
+        span = max(1, self.cfg.horizon_days - 2)
+        day = self.cfg.start_date + timedelta(days=(group * 3) % span)
+        return datetime.combine(day, time(10, 0))
 
-        plan: list[tuple[Scenario, int]] = []
-        consumed = 0
-        unexplained = 0
+    def _ambiguous_refund_case(self, case_id: str, item: _PlanItem) -> _BuiltCase:
+        assert item.ambiguous_group is not None
+        created_at = self._ambiguous_time(item.ambiguous_group)
+        recovery_amount = 2_500 + item.ambiguous_group
+        pair_count = 2 if item.single_ambiguous_case else 1
 
-        while consumed < cfg.n_records:
-            if self.rng.random() >= cfg.defect_rate:
-                plan.append((Scenario.CLEAN_1TO1, 1))
-                consumed += 1
+        parents: list[GatewayEvent] = []
+        refunds: list[GatewayEvent] = []
+        for offset in range(pair_count):
+            parent = self._payment(
+                created_at=created_at + timedelta(minutes=offset),
+                amount_paise=max(self._draw_amount_paise(), recovery_amount * 4, 5_000),
+                method="upi",
+            )
+            parents.append(parent)
+            refunds.append(
+                self._refund(
+                    parent,
+                    amount_paise=recovery_amount,
+                    created_at=created_at + timedelta(hours=1, minutes=offset),
+                )
+            )
+
+        extras = [
+            self._payment(created_at=created_at)
+            for _ in range(item.n_events - pair_count * 2)
+        ]
+        events = [*parents, *refunds, *extras]
+        details: list[SettlementDetail] = []
+        summaries: list[SettlementSummary] = []
+        bank: list[BankStatementRow] = []
+        allocations: list[AnswerKeyAllocation] = []
+
+        for index, (parent, refund) in enumerate(zip(parents, refunds)):
+            settlement_events = [parent, refund]
+            if index == 0:
+                settlement_events[1:1] = extras
+            built = self._settlement(
+                settlement_events,
+                self._settled_at(created_at),
+                anonymous_event_ids={refund.event_id},
+            )
+            details.extend(built[0])
+            summaries.append(built[1])
+            bank.extend(built[2])
+            allocations.extend(
+                self._allocations(
+                    [event.event_id for event in settlement_events if event.event_type == "PAYMENT"],
+                    built[1],
+                    built[2],
+                )
+            )
+
+        key = self._key(
+            case_id,
+            Scenario.AMBIGUOUS_REFUND,
+            events,
+            summaries,
+            bank,
+            "each anonymous refund delta has at least two globally admissible events",
+        )
+        return _BuiltCase(events, details, summaries, bank, allocations, key)
+
+    def _unsettled_case(self, case_id: str, scenario: Scenario, n_events: int) -> _BuiltCase:
+        created_at = self._draw_created_at()
+        if scenario is Scenario.CAPTURED_UNSETTLED:
+            events = [
+                self._payment(created_at=created_at, status="CAPTURED")
+                for _ in range(n_events)
+            ]
+            notes = "captured payments should settle but occur in no settlement"
+        else:
+            events = [
+                self._payment(
+                    created_at=created_at,
+                    status=self.rng.choice(("CREATED", "FAILED")),
+                )
+                for _ in range(n_events)
+            ]
+            notes = "created/failed events are intentionally not settleable"
+        key = self._key(case_id, scenario, events, [], [], notes)
+        return _BuiltCase(events, [], [], [], [], key)
+
+    def _build_case(self, item: _PlanItem) -> _BuiltCase:
+        case_id = self._next_case_id()
+        if item.scenario in {
+            Scenario.STRAIGHT_THROUGH,
+            Scenario.DUPLICATE_DETAIL_EXPORT,
+            Scenario.FEE_TAX_VARIANCE,
+            Scenario.BANK_CREDIT_MISSING,
+            Scenario.BANK_CREDIT_DUPLICATE,
+        }:
+            return self._ordinary_case(case_id, item.scenario, item.n_events)
+        if item.scenario is Scenario.REFUND_LATER_CYCLE:
+            return self._refund_later_case(case_id, item.n_events)
+        if item.scenario is Scenario.CORROBORATED_REFUND:
+            return self._corroborated_refund_case(case_id, item.n_events)
+        if item.scenario is Scenario.CONTESTED_REFUND:
+            return self._contested_refund_case(case_id, item.n_events)
+        if item.scenario is Scenario.AMBIGUOUS_REFUND:
+            return self._ambiguous_refund_case(case_id, item)
+        if item.scenario in {Scenario.CAPTURED_UNSETTLED, Scenario.NOT_SETTLEABLE}:
+            return self._unsettled_case(case_id, item.scenario, item.n_events)
+        raise ValueError(f"unhandled scenario {item.scenario}")
+
+    def _assert_recovery_class_distinction(
+        self,
+        events: list[GatewayEvent],
+        details: list[SettlementDetail],
+        cases: list[AnswerKeyCase],
+        allocations: list[AnswerKeyAllocation],
+    ) -> None:
+        """Prove globally that corroboration resolves contested but not ambiguous ties."""
+        referenced = {detail.event_id for detail in details if detail.event_id is not None}
+        payments_by_txn: dict[str, list[GatewayEvent]] = {}
+        for event in events:
+            if event.event_type == "PAYMENT":
+                payments_by_txn.setdefault(event.txn_id, []).append(event)
+        details_by_settlement: dict[str, list[SettlementDetail]] = {}
+        for detail in details:
+            details_by_settlement.setdefault(detail.settlement_id, []).append(detail)
+
+        allocated_event_ids = {allocation.event_id for allocation in allocations}
+        contested_amounts: set[int] = set()
+        ambiguous_amounts: set[int] = set()
+        contested_ids: set[str] = set()
+        ambiguous_ids: set[str] = set()
+
+        for case in cases:
+            if case.scenario not in {
+                Scenario.CONTESTED_REFUND,
+                Scenario.AMBIGUOUS_REFUND,
+            }:
                 continue
+            anonymous = [
+                detail
+                for settlement_id in case.settlement_ids
+                for detail in details_by_settlement.get(settlement_id, [])
+                if detail.line_type == "REFUND" and detail.event_id is None
+            ]
+            if case.scenario is Scenario.CONTESTED_REFUND:
+                assert len(anonymous) == 1
+                contested_ids.add(case.case_id)
+            else:
+                assert anonymous
+                ambiguous_ids.add(case.case_id)
 
-            scenario = self.rng.choices(defects, weights=weights)[0]
+            for detail in anonymous:
+                amount = -detail.gross_effect_paise
+                candidates = [
+                    event
+                    for event in events
+                    if event.event_type == "REFUND" and event.amount_paise == amount
+                ]
+                survivors = [
+                    event
+                    for event in candidates
+                    if not self._failed_recovery_gates_135(
+                        event,
+                        detail.settled_at.date(),
+                        referenced,
+                        payments_by_txn,
+                    )
+                ]
+                if case.scenario is Scenario.CONTESTED_REFUND:
+                    contested_amounts.add(amount)
+                    assert 2 <= len(candidates) <= 4
+                    assert len(survivors) == 1
+                    survivor_allocations = [
+                        allocation
+                        for allocation in allocations
+                        if allocation.event_id == survivors[0].event_id
+                    ]
+                    assert survivor_allocations
+                    assert {
+                        allocation.settlement_id for allocation in survivor_allocations
+                    } == {detail.settlement_id}
+                    case_refunds = {
+                        event.event_id
+                        for event in events
+                        if event.event_id in case.event_ids
+                        and event.event_type == "REFUND"
+                        and event.amount_paise == amount
+                    }
+                    assert not (
+                        case_refunds - {survivors[0].event_id}
+                    ) & allocated_event_ids
+                else:
+                    ambiguous_amounts.add(amount)
+                    assert len(survivors) >= 2
 
-            if scenario is Scenario.MISSING_ON_GATEWAY:
-                if unexplained >= max_unexplained:
-                    continue
-                unexplained += 1
-                plan.append((scenario, 0))
-                continue
+        assert contested_ids.isdisjoint(ambiguous_ids)
+        assert contested_amounts.isdisjoint(ambiguous_amounts)
 
-            k = 1
-            if scenario is Scenario.MANY_TO_ONE:
-                lo, hi = cfg.many_to_one_batch_size
-                k = self.rng.randint(lo, hi)
-                if consumed + k > cfg.n_records:
-                    # Not enough budget left for a meaningful batch.
-                    plan.append((Scenario.CLEAN_1TO1, 1))
-                    consumed += 1
-                    continue
-
-            plan.append((scenario, k))
-            consumed += k
-
-        return plan
-
-    def _build_case(self, scenario: Scenario, k: int):
-        cfg = self.cfg
-        if scenario is Scenario.CLEAN_1TO1:
-            return self._simple_settled(scenario)
-        if scenario is Scenario.DATE_OFFSET:
-            return self._simple_settled(scenario, lag=self.rng.choice(cfg.offset_lag_choices))
-        if scenario is Scenario.FEE_DEDUCTION:
-            basis = self.rng.choice([AmountBasis.GROSS, AmountBasis.GROSS_MINUS_FEE])
-            return self._simple_settled(scenario, basis=basis)
-        if scenario is Scenario.ROUNDING:
-            paise = self.rng.randint(*cfg.rounding_paise)
-            delta = Decimal(paise) / Decimal(100) * self.rng.choice([Decimal(1), Decimal(-1)])
-            return self._simple_settled(scenario, rounding_delta=delta)
-        if scenario is Scenario.FX_SETTLEMENT:
-            return self._simple_settled(scenario, currency=self.rng.choice(list(FX_RATES)))
-        if scenario is Scenario.GARBLED_NARRATION:
-            return self._simple_settled(scenario, garbled=True)
-        if scenario is Scenario.MANY_TO_ONE:
-            return self._many_to_one(k)
-        if scenario is Scenario.DUPLICATE_SETTLEMENT:
-            return self._duplicate_settlement()
-        if scenario is Scenario.MISSING_ON_BANK:
-            return self._missing_on_bank()
-        if scenario is Scenario.MISSING_ON_GATEWAY:
-            return self._missing_on_gateway()
-        if scenario is Scenario.PARTIAL_REFUND:
-            return self._partial_refund()
-        if scenario is Scenario.NOT_SETTLEABLE:
-            return self._not_settleable()
-        raise ValueError(f"unhandled scenario {scenario}")
+    # ---------- public orchestration ----------
 
     def generate(self) -> Dataset:
-        gateway: list[GatewayTxn] = []
-        bank: list[BankCredit] = []
-        links: list[TruthLink] = []
+        plan = self._plan()
+        events: list[GatewayEvent] = []
+        details: list[SettlementDetail] = []
+        summaries: list[SettlementSummary] = []
+        bank: list[BankStatementRow] = []
+        cases: list[AnswerKeyCase] = []
+        allocations: list[AnswerKeyAllocation] = []
 
-        for scenario, k in self._plan():
-            txns, credits, link = self._build_case(scenario, k)
-            gateway.extend(txns)
-            bank.extend(credits)
-            links.append(link)
+        for item in plan:
+            built = self._build_case(item)
+            events.extend(built.events)
+            details.extend(built.details)
+            summaries.extend(built.summaries)
+            bank.extend(built.bank)
+            allocations.extend(built.allocations)
+            cases.append(built.key)
 
-        pairs = [
-            TruthPair(txn_id=t, utr=u, link_id=link.link_id, scenario=link.scenario)
-            for link in links
-            for t in link.txn_ids
-            for u in link.utrs
+        self._assert_recovery_class_distinction(
+            events,
+            details,
+            cases,
+            allocations,
+        )
+
+        # File positions are not evidence. Separate shuffles prevent accidental
+        # case-wise alignment while remaining deterministic under the one RNG.
+        self.rng.shuffle(events)
+        self.rng.shuffle(details)
+        self.rng.shuffle(summaries)
+        self.rng.shuffle(bank)
+        self.rng.shuffle(allocations)
+
+        generated_at = datetime.combine(self.cfg.start_date, time(0, 0))
+        batch_id = f"batch_{self.cfg.family.value}_{self.cfg.seed}"
+        batch_config = [
+            BatchConfigRow(
+                batch_id=batch_id,
+                seed=self.cfg.seed,
+                family=self.cfg.family,
+                n_gateway_events=len(events),
+                n_cases=len(cases),
+                generated_at=generated_at,
+            )
+        ]
+        pricing_rules = [
+            PricingRule(method, METHOD_FEE_RATE[method], GST_RATE_BPS)
+            for method in PAYMENT_METHODS
         ]
 
-        # Order must carry no information.
-        self.rng.shuffle(gateway)
-        self.rng.shuffle(bank)
+        scenario_counts: dict[str, int] = {}
+        outcome_counts: dict[str, int] = {}
+        for case in cases:
+            scenario_counts[case.scenario.value] = scenario_counts.get(case.scenario.value, 0) + 1
+            outcome_counts[case.expected_outcome.value] = outcome_counts.get(case.expected_outcome.value, 0) + 1
 
-        meta = {
+        meta: dict[str, object] = {
+            "batch_id": batch_id,
             "seed": self.cfg.seed,
+            "family": self.cfg.family.value,
             "n_records_requested": self.cfg.n_records,
-            "n_gateway_rows": len(gateway),
+            "n_gateway_events": len(events),
+            "n_gateway_rows": len(events),
+            "n_cases": len(cases),
+            "n_settlement_detail_rows": len(details),
+            "n_settlements": len(summaries),
             "n_bank_rows": len(bank),
-            "n_links": len(links),
-            "n_truth_pairs": len(pairs),
-            "defect_rate": self.cfg.defect_rate,
-            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "n_allocations": len(allocations),
+            "generated_at": generated_at.isoformat(timespec="seconds"),
+            "scenario_case_counts": dict(sorted(scenario_counts.items())),
+            "expected_outcome_case_counts": dict(sorted(outcome_counts.items())),
         }
-        return Dataset(gateway=gateway, bank=bank, links=links, pairs=pairs, config_meta=meta)
+        return Dataset(
+            batch_config=batch_config,
+            pricing_rules=pricing_rules,
+            gateway=events,
+            details=details,
+            summaries=summaries,
+            bank=bank,
+            cases=cases,
+            allocations=allocations,
+            config_meta=meta,
+        )
 
 
 def generate(config: GenConfig | None = None) -> Dataset:

@@ -1,0 +1,6 @@
+method,fee_rate_bps,gst_rate_bps
+upi,0,1800
+card,200,1800
+netbanking,175,1800
+wallet,200,1800
+emi,300,1800
