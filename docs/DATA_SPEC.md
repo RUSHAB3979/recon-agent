@@ -1,155 +1,240 @@
-# Synthetic dataset & answer key
+# Reconciliation benchmark data
 
-Everything downstream is scored against the answer key, so the answer key being
-correct is a precondition for any number in the README meaning anything. This
-document describes what is generated, what is guaranteed about it, and where it
-knowingly departs from the original plan.
+This dataset publishes identification keys in the clear and measures what an
+exact join cannot answer: whether settlement controls hold, whether lifecycle
+state requires action, and whether an unexplained refund has one admissible
+source or several. Scenario prevalence is counted by **case**, not by exported
+row. Every case contains 3–7 gateway event rows, so a 500-event batch contains
+100 cases.
 
-## Files per dataset
+## Dataset families
 
-| File | Contents |
-|---|---|
-| `gateway_ledger.csv` | Source A — payment gateway records, shuffled |
-| `bank_settlement.csv` | Source B — bank statement credits, shuffled |
-| `answer_key_links.csv` | Semantic ground truth: one row per relationship |
-| `answer_key_pairs.csv` | Atomic ground truth: one row per `(txn_id, utr)` |
-| `dataset_meta.json` | Seed, counts, scenario mix — the reproducibility record |
-
-Two answer-key views exist because they answer different questions. **Pairs**
-give honest partial credit on batch matches when computing precision and recall
-— getting 7 of 8 legs of a batch right should score 7/8, not 0. **Links** are
-what exception classification and duplicate detection are scored on. Reporting
-only one of them would let a weak result hide behind the other.
-
-## Schemas
-
-**Gateway ledger** — `txn_id, order_id, amount, currency, status, created_at,
-method, fee, tax, net_amount, refund_amount`
-
-**Bank settlement** — `utr, settlement_date, credit_amount, narration, bank_ref`
-
-Note what the bank side does *not* carry: no `txn_id`, no `order_id`, no
-currency, no fee breakdown. A real statement gives you a UTR, a date, an INR
-amount and a free-text narration. The narration is the only bridge back to the
-gateway — which is precisely why garbled narrations are the case where an LLM
-earns its place, and why everything else should be deterministic.
-
-### Deviation from the original spec
-
-`refund_amount` was added to the gateway schema. The original field list had no
-refund column, which would have made every partial-refund case arithmetically
-unsolvable by any method — the matcher would have had to guess the refund
-amount. That is not a test of anything; it just depresses recall. With the
-column present, partial refunds test multi-column arithmetic
-(`net_amount - refund_amount`), which is a real capability. This is the only
-departure from the planned schema.
-
-## Scenario classes
-
-Each generated case is labelled with exactly one scenario and one expected
-resolution. The scenario says what was wrong; the resolution says what a correct
-agent should have *done*. Scoring uses the resolution.
-
-| Scenario | Expected resolution | Capability tested |
+| Family | Published use | Scenario shares |
 |---|---|---|
-| `clean_1to1` | `auto_match` | Baseline |
-| `date_offset` | `auto_match` | Time-window matching (T+0..T+4) |
-| `fee_deduction` | `auto_match` | Fee-aware matching (gross vs net basis) |
-| `rounding` | `auto_match` | Tolerance handling (±₹0.01–0.05) |
-| `many_to_one` | `auto_match` | Aggregation / batch settlement |
-| `partial_refund` | `auto_match` | Multi-column arithmetic |
-| `fx_settlement` | `auto_match` | Currency normalisation |
-| `garbled_narration` | `auto_match` | Fuzzy/LLM reference recovery |
-| `missing_on_bank` | `exception:unsettled` | True exception |
-| `missing_on_gateway` | `exception:unexplained_credit` | True exception |
-| `duplicate_settlement` | `exception:duplicate_settlement` | Duplicate detection |
-| `not_settleable` | `no_action` | **Trap** — must NOT be reported |
+| `development` | five 500-event seeds used to freeze thresholds | development |
+| `primary` | one 500-event headline, throughput, and demo batch | primary |
+| `stress` | ten pooled 500-event exception-enriched batches | stress |
 
-`not_settleable` is deliberate. Those are `failed` / `created` gateway rows that
-were never going to settle. Reporting one as an unmatched exception is a false
-positive, not a find, and an agent that pads its exception list with them should
-be penalised for it.
+Development is the only family on which thresholds may be tuned. Primary and
+stress results are reported separately; averaging them would mix realistic and
+enriched prevalence.
 
-The three true-exception classes are over-weighted relative to real-world
-frequency. Per-category precision computed over 5 instances moves in 20% steps,
-which is too coarse to report honestly; the weights put ~15–20 cases in each
-exception bucket at 500 records. This is a stated property of the dataset, not a
-claim about production traffic.
+## Files
 
-## Guarantees (enforced by `make test`, not assumed)
+Each run emits six input files, two answer-key files, and metadata.
 
-The self-validation suite runs across four seeds and asserts:
+### `batch_config.csv`
 
-- Every `txn_id` and `utr` in the key exists in the source files
-- Every gateway row and every bank row belongs to **exactly one** link
-- Truth pairs are exactly the cross-product of each link's txns × credits
-- `net_amount == amount - fee - tax` for every row, exact to the paisa
-- Every link's `actual_inr_total` equals the sum of the credits it cites
-- Per-scenario invariants — e.g. a `fee_deduction` case genuinely does *not*
-  match on `net_amount`; a batch narration genuinely carries no per-txn
-  reference; an FX case genuinely does not settle at face value
-- Where the key says a narration's reference was **destroyed**, no prefix of ≥4
-  characters survives anywhere in the string
-- Same seed → byte-identical output; different seeds → disjoint identifiers
-- Row order carries no matching signal (Spearman ρ < 0.2 between file positions)
+| Column | Type |
+|---|---|
+| `batch_id` | string |
+| `seed` | integer |
+| `family` | `development`, `primary`, or `stress` |
+| `n_gateway_events` | integer |
+| `n_cases` | integer |
+| `generated_at` | ISO 8601 timestamp |
 
-That last-but-one check exists because a labelling bug got through once. An
-earlier version marked short truncations as "reference destroyed" when 6–7
-characters of a 14-character reference were still sitting in the narration —
-recoverable by prefix lookup. It survived the first test run because no such
-case happened to occur in seed 42. The fixture is now parameterised over four
-seeds, and the check re-derives recoverability from the emitted string instead
-of trusting the label.
+`generated_at` is a deterministic batch timestamp. It is not wall-clock time,
+because identical `(config, seed)` inputs must produce byte-identical files.
 
-## Money
+### `pricing_rules.csv`
 
-`Decimal` throughout, quantised to 2dp at construction, serialised with exactly
-two decimal places. Floats are never used for currency. A reconciliation engine
-that reports a ₹0.01 tolerance breach caused by its own binary-float error is
-worse than useless.
+| Column | Type | Meaning |
+|---|---|---|
+| `method` | string | `upi`, `card`, `netbanking`, `wallet`, or `emi` |
+| `fee_rate_bps` | integer | basis points of event amount |
+| `gst_rate_bps` | integer | `1800` |
 
-## Intrinsic ambiguity floor
+### `gateway_ledger.csv`
 
-`make ambiguity` reports how many 1:1 settled credits have more than one
-indistinguishable gateway candidate on amount + date alone:
+The ledger is one row per **event**, not one row per transaction. A refund is a
+positive-valued `REFUND` row sharing the payment's `txn_id` and `order_id`.
 
+| Column | Type |
+|---|---|
+| `event_id` | string, primary key |
+| `event_type` | `PAYMENT` or `REFUND` |
+| `txn_id` | string |
+| `order_id` | string |
+| `amount_paise` | positive integer |
+| `currency` | `INR` |
+| `status` | `CREATED`, `FAILED`, `CAPTURED`, or `PROCESSED` |
+| `created_at` | ISO 8601 timestamp |
+| `method` | string |
+
+`CREATED` and `FAILED` do not settle. `CAPTURED` should settle but has not.
+`PROCESSED` has settled, including refunds represented by anonymous settlement
+detail lines in the three refund-recovery scenarios.
+
+### `settlement_detail.csv`
+
+| Column | Type | Meaning |
+|---|---|---|
+| `detail_id` | string | economic line key; deliberately repeats only in `DUPLICATE_DETAIL_EXPORT` |
+| `settlement_id` | string |
+| `event_id` | string or empty | empty on anonymous refund lines |
+| `line_type` | `PAYMENT` or `REFUND` |
+| `gross_effect_paise` | signed integer | refunds are negative |
+| `fee_paise` | integer |
+| `tax_paise` | integer |
+| `net_effect_paise` | integer |
+| `settled_at` | ISO 8601 timestamp |
+| `currency` | `INR` |
+| `reference_text` | string or empty |
+
+### `settlement_summary.csv`
+
+| Column | Type |
+|---|---|
+| `settlement_id` | string, primary key |
+| `utr` | string |
+| `settlement_date` | ISO date |
+| `gross_payment_paise` | integer |
+| `refund_paise` | integer |
+| `fee_paise` | integer |
+| `tax_paise` | integer |
+| `net_amount_paise` | integer |
+| `line_count` | integer |
+| `currency` | `INR` |
+| `status` | string |
+
+### `bank_statement.csv`
+
+| Column | Type |
+|---|---|
+| `bank_row_id` | string, primary key |
+| `utr` | string |
+| `posted_at` | ISO 8601 timestamp |
+| `credit_amount_paise` | integer |
+| `currency` | `INR` |
+| `narration` | string |
+| `bank_ref` | string |
+
+Narration has one format:
+
+```text
+NEFT CR: {bank} {utr} RAZORPAY SETTLEMENT
 ```
-data/dev      30 / 385 ambiguous  (7.8%)  -> deterministic ceiling 92.2%
-data/holdout  37 / 421 ambiguous  (8.8%)  -> deterministic ceiling 91.2%
+
+It never carries an order reference. The UTR is also present in its own column,
+so bank-to-summary identification is an exact join rather than a fuzzy task.
+
+### `answer_key_cases.csv`
+
+| Column | Type |
+|---|---|
+| `case_id` | string |
+| `scenario` | scenario name below |
+| `expected_outcome` | `RECONCILED`, `EXCEPTION`, `NO_ACTION`, or `ABSTAIN` |
+| `settlement_ids` | pipe-joined strings |
+| `bank_row_ids` | pipe-joined strings |
+| `event_ids` | pipe-joined strings |
+| `expected_exception_category` | string or empty |
+| `notes` | string |
+
+The duplicate-detail warning is recorded as
+`DUPLICATE_DETAIL_EXPORT_WARNING` even though the expected outcome remains
+`RECONCILED`. Exception scenarios use their scenario name as the category.
+
+### `answer_key_allocations.csv`
+
+Atomic correspondences have columns `event_id, settlement_id, bank_row_id`.
+They provide partial-credit scoring at event-leg granularity. A blank
+`bank_row_id` means the event is allocated to an existing settlement whose bank
+credit is deliberately missing. Ambiguous refund candidates receive no chosen
+allocation, because choosing one would manufacture truth that the evidence does
+not contain. A contested refund allocates its one admissible candidate; its
+distractor refunds do not appear in this file, including a gate-1 distractor
+whose visible support-settlement line exists only to prove prior consumption.
+Visible non-distractor legs in the same case remain allocated and scoreable.
+
+### `dataset_meta.json`
+
+Metadata records the seed, family, artifact row counts, expected-outcome counts,
+and achieved `scenario_case_counts`. That last value makes the published shares
+auditable without inferring cases from row counts.
+
+## Exact money and controls
+
+Every emitted money column ends in `_paise` and contains an integer. Decimal is
+used only to turn the unchanged price-point catalogue into paise at construction;
+no float ever represents or participates in a money value. Fee and tax use the
+single integer helper `round_half_up(numerator, denominator)`.
+
+The following controls hold exactly unless the named scenario deliberately
+targets the control:
+
+```text
+detail:   net_effect_paise = gross_effect_paise - fee_paise - tax_paise
+
+summary:  net_amount_paise = gross_payment_paise - refund_paise
+                             - fee_paise - tax_paise
+
+roll-up:  summary totals = totals over UNIQUE detail_id rows
+
+bank:     sum(credit_amount_paise for rows with the summary UTR)
+          = net_amount_paise
+
+fee:      fee_paise = round_half_up(amount_paise * fee_rate_bps, 10000)
+
+tax:      tax_paise = round_half_up(fee_paise * gst_rate_bps, 10000)
 ```
 
-(These move whenever the amount distribution or defect weights move. `make
-stats` regenerates the README table from the data on disk so the headline
-figures can never disagree with `make verify`; the numbers quoted here are
-illustrative of the order of magnitude.)
+`BANK_CREDIT_MISSING` makes the settlement-level bank sum zero;
+`BANK_CREDIT_DUPLICATE` makes it twice the summary amount; and
+`FEE_TAX_VARIANCE` breaks exactly one of the fee or tax equations while detail,
+summary, roll-up, and bank arithmetic continue to agree. Duplicate detail rows
+break a naive all-row sum, but the required unique-`detail_id` roll-up still
+ties.
 
-**This number is the point of the whole design.** Amounts are drawn bimodally:
-45% snap to catalogue price points (₹99, ₹499, ₹1999…), the rest from continuous
-bands. An earlier version drew amounts continuously and produced a 0.5%
-ambiguity rate — meaning `(amount, date)` was very nearly a unique key and a
-trivial matcher would score ~99% on a dataset that looked rigorous. Real payment
-amounts pile up on price points, and that clustering is what creates the
-collisions that force a matcher to use narration evidence.
+## Scenario shares (by case)
 
-Quote the ceiling next to the match rate. "97% match rate" and "97% match rate
-against a 92.2% amount+date ceiling" are very different claims, and only the
-second one survives a panel asking whether the data was trivially separable.
+| Scenario | Development | Primary | Stress | Expected outcome |
+|---|---:|---:|---:|---|
+| `STRAIGHT_THROUGH` | 26% | 48% | 20% | `RECONCILED` |
+| `CONTESTED_REFUND` | 14% | 8% | 14% | `RECONCILED` |
+| `REFUND_LATER_CYCLE` | 9% | 10% | 10% | `RECONCILED` |
+| `DUPLICATE_DETAIL_EXPORT` | 9% | 8% | 10% | `RECONCILED` with warning |
+| `CORROBORATED_REFUND` | 10% | 6% | 10% | `RECONCILED` |
+| `FEE_TAX_VARIANCE` | 6% | 4% | 8% | `EXCEPTION` |
+| `CAPTURED_UNSETTLED` | 6% | 6% | 7% | `EXCEPTION` |
+| `BANK_CREDIT_MISSING` | 4% | — | 7% | `EXCEPTION` |
+| `AMBIGUOUS_REFUND` | 8% | 4% | 6% | `ABSTAIN` |
+| `BANK_CREDIT_DUPLICATE` | 3% | — | 5% | `EXCEPTION` |
+| `NOT_SETTLEABLE` | 5% | 6% | 3% | `NO_ACTION` |
 
-## Regenerating
+Shares are apportioned deterministically by largest remainder. At exactly 100
+cases the achieved counts equal the percentages above; smaller batches record
+their achieved integer counts in metadata.
 
-```bash
-make data                                    # dev (seed 42) + held-out (seed 20260905)
-make verify                                  # self-validation + ambiguity floor
-python -m recon.datagen.cli --records 2000 --seed 7 --out data/scale
-```
+`REFUND_LATER_CYCLE` emits the payment in one settlement and its refund event in
+a later settlement. `CORROBORATED_REFUND` uses an anonymous refund detail line
+whose settlement delta has exactly one amount candidate. `CONTESTED_REFUND`
+creates two to four exact-amount refund candidates, exactly one of which remains
+after consumption (gate 1), the four-day settlement window (gate 3), and settled
+parent lineage (gate 5) are applied. `AMBIGUOUS_REFUND` pairs deltas and
+candidates so at least two global allocations still survive those gates; no
+frequency or prior breaks the tie.
 
-A dataset is a pure function of `(GenConfig, seed)`. Tune anything in
-`src/recon/datagen/config.py`; the answer key follows automatically because it
-is constructed alongside the data, never inferred from it afterwards.
+Contested-case notes record every distractor as
+`event_id:GATE_1_CONSUMED`, `event_id:GATE_3_TOO_OLD`,
+`event_id:GATE_3_AFTER_SETTLEMENT`, or
+`event_id:GATE_5_BROKEN_LINEAGE`. Gate-3 construction deliberately exercises
+both sides of the window. A gate-5 CAPTURED parent is support evidence owned by
+the contested case, appears in no detail line, and is not a separately labelled
+`CAPTURED_UNSETTLED` case.
+
+## Measuring ambiguity
+
+`python tools/ambiguity.py [data_dir]` deduplicates detail rows and derives each
+settlement's anonymous refund delta. It reports one candidate histogram using
+amount alone and a second after gates 1, 3, and 5, plus the total number of
+candidates those gates eliminate. The legacy `candidate_multiplicities`,
+`ambiguous`, and `ambiguity_rate` values remain the after-gates view so existing
+statistics tooling keeps its meaning.
 
 ## Honest limitation
 
 The held-out set is a different seed from the same generator. It measures
-whether tolerances were overfitted; it does **not** measure robustness to real
-bank data, because the same code wrote both the defects and their labels. Say
-this before anyone asks — claiming more is the trap.
+whether tolerances were overfitted. It does **not** measure robustness to real
+bank data, because the same code writes both the defects and their labels.

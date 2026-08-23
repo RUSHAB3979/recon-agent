@@ -1,31 +1,33 @@
 {
-  "seed": 42,
-  "n_records_requested": 500,
-  "n_gateway_rows": 500,
-  "n_bank_rows": 445,
-  "n_links": 458,
-  "n_truth_pairs": 487,
-  "defect_rate": 0.3,
-  "generated_at": "2026-08-22T16:59:41",
-  "scenario_counts": {
-    "clean_1to1": 313,
-    "date_offset": 13,
-    "duplicate_settlement": 14,
-    "fee_deduction": 14,
-    "fx_settlement": 11,
-    "garbled_narration": 16,
-    "many_to_one": 14,
-    "missing_on_bank": 20,
-    "missing_on_gateway": 18,
-    "not_settleable": 7,
-    "partial_refund": 7,
-    "rounding": 11
+  "batch_id": "batch_development_42",
+  "expected_outcome_case_counts": {
+    "ABSTAIN": 8,
+    "EXCEPTION": 19,
+    "NO_ACTION": 5,
+    "RECONCILED": 68
   },
-  "resolution_counts": {
-    "auto_match": 399,
-    "exception:duplicate_settlement": 14,
-    "exception:unexplained_credit": 18,
-    "exception:unsettled": 20,
-    "no_action": 7
-  }
+  "family": "development",
+  "generated_at": "2026-06-01T00:00:00",
+  "n_allocations": 421,
+  "n_bank_rows": 111,
+  "n_cases": 100,
+  "n_gateway_events": 500,
+  "n_gateway_rows": 500,
+  "n_records_requested": 500,
+  "n_settlement_detail_rows": 444,
+  "n_settlements": 112,
+  "scenario_case_counts": {
+    "AMBIGUOUS_REFUND": 8,
+    "BANK_CREDIT_DUPLICATE": 3,
+    "BANK_CREDIT_MISSING": 4,
+    "CAPTURED_UNSETTLED": 6,
+    "CONTESTED_REFUND": 14,
+    "CORROBORATED_REFUND": 10,
+    "DUPLICATE_DETAIL_EXPORT": 9,
+    "FEE_TAX_VARIANCE": 6,
+    "NOT_SETTLEABLE": 5,
+    "REFUND_LATER_CYCLE": 9,
+    "STRAIGHT_THROUGH": 26
+  },
+  "seed": 42
 }

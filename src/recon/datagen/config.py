@@ -1,121 +1,148 @@
-"""Configuration for the synthetic reconciliation dataset generator.
+"""Configuration for reproducible, prevalence-auditable benchmark batches.
 
-Every knob that affects the shape of the generated data lives here so that a
-dataset is fully described by (GenConfig, seed).  Nothing downstream is allowed
-to reach for a random number that is not derived from this config.
+Scenario prevalence belongs to cases rather than exported rows. Keeping the
+three family share tables here prevents row multiplication (for example,
+duplicate detail exports) from quietly changing the benchmark's class balance.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 from enum import Enum
 
 
+class Family(str, Enum):
+    """The benchmark split whose published case shares are being generated."""
+
+    DEVELOPMENT = "development"
+    PRIMARY = "primary"
+    STRESS = "stress"
+
+
 class Scenario(str, Enum):
-    """The defect classes injected into the dataset.
+    """The eleven mutually exclusive reconciliation cases in the benchmark."""
 
-    This enum IS the test suite: every member is a distinct reconciliation
-    capability that the matcher must demonstrate, and every generated record
-    is labelled with exactly one of them in the answer key.
-    """
-
-    CLEAN_1TO1 = "clean_1to1"
-    DATE_OFFSET = "date_offset"
-    FEE_DEDUCTION = "fee_deduction"
-    ROUNDING = "rounding"
-    MANY_TO_ONE = "many_to_one"
-    DUPLICATE_SETTLEMENT = "duplicate_settlement"
-    MISSING_ON_BANK = "missing_on_bank"
-    MISSING_ON_GATEWAY = "missing_on_gateway"
-    PARTIAL_REFUND = "partial_refund"
-    FX_SETTLEMENT = "fx_settlement"
-    GARBLED_NARRATION = "garbled_narration"
-    NOT_SETTLEABLE = "not_settleable"
+    STRAIGHT_THROUGH = "STRAIGHT_THROUGH"
+    REFUND_LATER_CYCLE = "REFUND_LATER_CYCLE"
+    CONTESTED_REFUND = "CONTESTED_REFUND"
+    DUPLICATE_DETAIL_EXPORT = "DUPLICATE_DETAIL_EXPORT"
+    CORROBORATED_REFUND = "CORROBORATED_REFUND"
+    CAPTURED_UNSETTLED = "CAPTURED_UNSETTLED"
+    NOT_SETTLEABLE = "NOT_SETTLEABLE"
+    FEE_TAX_VARIANCE = "FEE_TAX_VARIANCE"
+    BANK_CREDIT_MISSING = "BANK_CREDIT_MISSING"
+    BANK_CREDIT_DUPLICATE = "BANK_CREDIT_DUPLICATE"
+    AMBIGUOUS_REFUND = "AMBIGUOUS_REFUND"
 
 
 class Resolution(str, Enum):
-    """What a correct agent is expected to DO with a link.
+    """The action that is scored independently from the diagnostic label."""
 
-    Kept separate from Scenario on purpose: several scenarios are auto-matchable
-    (they just require a smarter matcher), while others are genuine exceptions
-    that must be surfaced, and one -- NOT_SETTLEABLE -- is a trap where the
-    correct behaviour is to stay silent.
-    """
-
-    AUTO_MATCH = "auto_match"
-    EXCEPTION_UNSETTLED = "exception:unsettled"
-    EXCEPTION_UNEXPLAINED_CREDIT = "exception:unexplained_credit"
-    EXCEPTION_DUPLICATE = "exception:duplicate_settlement"
-    NO_ACTION = "no_action"
+    RECONCILED = "RECONCILED"
+    EXCEPTION = "EXCEPTION"
+    NO_ACTION = "NO_ACTION"
+    ABSTAIN = "ABSTAIN"
 
 
-class AmountBasis(str, Enum):
-    """Which figure the bank actually credited for a settled transaction.
+# Integer percentages are intentional: largest-remainder apportionment can
+# reproduce the published mix without a floating-point sampling path.
+PRIMARY_CASE_SHARES: tuple[tuple[Scenario, int], ...] = (
+    (Scenario.STRAIGHT_THROUGH, 48),
+    (Scenario.REFUND_LATER_CYCLE, 10),
+    (Scenario.CONTESTED_REFUND, 8),
+    (Scenario.DUPLICATE_DETAIL_EXPORT, 8),
+    (Scenario.CORROBORATED_REFUND, 6),
+    (Scenario.CAPTURED_UNSETTLED, 6),
+    (Scenario.NOT_SETTLEABLE, 6),
+    (Scenario.FEE_TAX_VARIANCE, 4),
+    (Scenario.AMBIGUOUS_REFUND, 4),
+)
 
-    Real settlement files vary: fees are sometimes netted per transaction and
-    sometimes billed monthly, so the matcher cannot assume a single basis.
-    The answer key records the true basis so a fee-aware matcher can be scored
-    on whether it picked the right one.
-    """
-
-    NET = "net"                          # amount - fee - tax
-    GROSS = "gross"                      # fees billed separately, full amount credited
-    GROSS_MINUS_FEE = "gross_minus_fee"  # fee netted, GST billed separately
-
-
-# Weights are relative, not percentages; they are normalised at build time.
-# CLEAN_1TO1 is handled separately via defect_rate, so it is absent here.
+# The development family exists to freeze thresholds, and it is the only family
+# that may be tuned on.  It therefore has to contain EVERY scenario, including
+# CONTESTED_REFUND and every exception enriched in the stress mix.
 #
-# The three true-exception classes are deliberately over-weighted relative to
-# their real-world frequency.  The exception list is the graded differentiator,
-# and per-category precision computed over 5 instances moves in 20% steps --
-# too coarse to report honestly.  These weights put ~15-20 cases in every
-# exception bucket at 500 records, which is the point where a per-category
-# number starts to mean something.  This is a stated property of the dataset,
-# not a claim about production traffic.
+# This is not a cosmetic completeness point.  The abstention threshold is frozen
+# by choosing the lowest value that produces zero falsely-accepted recovery
+# allocations across the development seeds.  If AMBIGUOUS_REFUND were absent,
+# no threshold could ever produce a false accept, the rule would select zero,
+# the agent would never abstain, and it would false-match every ambiguous case
+# it later met.  A tuning set has to contain the phenomenon being tuned for.
 #
-# Even so, the thinner auto-match classes land around 8-14 cases at 500 records,
-# which is fine for a headline match rate but noisy for a per-class breakdown.
-# Run `make data-large` (2000 records) when reporting per-class numbers; keep
-# the headline metrics at 500, which is the graded throughput bar.
-DEFAULT_DEFECT_WEIGHTS: dict[Scenario, float] = {
-    Scenario.DATE_OFFSET: 4.0,
-    Scenario.FEE_DEDUCTION: 3.5,
-    Scenario.ROUNDING: 2.5,
-    Scenario.MANY_TO_ONE: 3.5,
-    Scenario.DUPLICATE_SETTLEMENT: 4.0,
-    Scenario.MISSING_ON_BANK: 6.0,
-    Scenario.MISSING_ON_GATEWAY: 5.0,
-    Scenario.PARTIAL_REFUND: 2.5,
-    Scenario.FX_SETTLEMENT: 4.0,
-    Scenario.GARBLED_NARRATION: 4.5,
-    Scenario.NOT_SETTLEABLE: 2.5,
+# CONTESTED_REFUND, CORROBORATED_REFUND, and AMBIGUOUS_REFUND are the recovery
+# classes the threshold has to tell apart: amount collisions must be resolved
+# by evidence in the first, are already unique in the second, and remain tied
+# in the third.  All three therefore have material development prevalence.
+#
+# These shares deliberately differ from STRESS_CASE_SHARES.  Making them equal
+# would fit the frozen threshold to the exact prevalence of the batch it is
+# later scored on, which is the overfitting this three-family split exists to
+# prevent.  Development prevalence is never reported.
+DEVELOPMENT_CASE_SHARES: tuple[tuple[Scenario, int], ...] = (
+    (Scenario.STRAIGHT_THROUGH, 26),
+    (Scenario.CONTESTED_REFUND, 14),
+    (Scenario.CORROBORATED_REFUND, 10),
+    (Scenario.REFUND_LATER_CYCLE, 9),
+    (Scenario.DUPLICATE_DETAIL_EXPORT, 9),
+    (Scenario.AMBIGUOUS_REFUND, 8),
+    (Scenario.CAPTURED_UNSETTLED, 6),
+    (Scenario.FEE_TAX_VARIANCE, 6),
+    (Scenario.NOT_SETTLEABLE, 5),
+    (Scenario.BANK_CREDIT_MISSING, 4),
+    (Scenario.BANK_CREDIT_DUPLICATE, 3),
+)
+
+STRESS_CASE_SHARES: tuple[tuple[Scenario, int], ...] = (
+    (Scenario.STRAIGHT_THROUGH, 20),
+    (Scenario.CONTESTED_REFUND, 14),
+    (Scenario.REFUND_LATER_CYCLE, 10),
+    (Scenario.DUPLICATE_DETAIL_EXPORT, 10),
+    (Scenario.CORROBORATED_REFUND, 10),
+    (Scenario.FEE_TAX_VARIANCE, 8),
+    (Scenario.CAPTURED_UNSETTLED, 7),
+    (Scenario.BANK_CREDIT_MISSING, 7),
+    (Scenario.AMBIGUOUS_REFUND, 6),
+    (Scenario.BANK_CREDIT_DUPLICATE, 5),
+    (Scenario.NOT_SETTLEABLE, 3),
+)
+
+SCENARIO_OUTCOMES: dict[Scenario, Resolution] = {
+    Scenario.STRAIGHT_THROUGH: Resolution.RECONCILED,
+    Scenario.REFUND_LATER_CYCLE: Resolution.RECONCILED,
+    Scenario.CONTESTED_REFUND: Resolution.RECONCILED,
+    Scenario.DUPLICATE_DETAIL_EXPORT: Resolution.RECONCILED,
+    Scenario.CORROBORATED_REFUND: Resolution.RECONCILED,
+    Scenario.CAPTURED_UNSETTLED: Resolution.EXCEPTION,
+    Scenario.NOT_SETTLEABLE: Resolution.NO_ACTION,
+    Scenario.FEE_TAX_VARIANCE: Resolution.EXCEPTION,
+    Scenario.BANK_CREDIT_MISSING: Resolution.EXCEPTION,
+    Scenario.BANK_CREDIT_DUPLICATE: Resolution.EXCEPTION,
+    Scenario.AMBIGUOUS_REFUND: Resolution.ABSTAIN,
 }
 
 PAYMENT_METHODS = ["upi", "card", "netbanking", "wallet", "emi"]
 METHOD_WEIGHTS = [0.46, 0.28, 0.14, 0.08, 0.04]
 
-# Per-method fee rates (fraction of gross).  Roughly modelled on published
-# Indian PA pricing; exact values do not matter, consistency does.
-METHOD_FEE_RATE: dict[str, Decimal] = {
-    "upi": Decimal("0.0000"),
-    "card": Decimal("0.0200"),
-    "netbanking": Decimal("0.0175"),
-    "wallet": Decimal("0.0200"),
-    "emi": Decimal("0.0300"),
+# The original rates are retained exactly, expressed once as integer basis
+# points so no binary float or second monetary rounding path can enter a fee.
+METHOD_FEE_RATE: dict[str, int] = {
+    "upi": 0,
+    "card": 200,
+    "netbanking": 175,
+    "wallet": 200,
+    "emi": 300,
 }
-
-GST_RATE = Decimal("0.18")
+GST_RATE_BPS = 1800
 
 # Real payment amounts are not uniformly distributed -- they pile up on price
-# points, because that is how things are priced.  This matters more than it
+# points, because that is how things are priced. This matters more than it
 # looks: with continuously-drawn amounts, (amount, date) is very nearly a unique
 # key and a trivial matcher scores ~99%, which would make every headline number
-# in this project meaningless.  Clustering amounts onto price points is what
-# creates genuine collisions, and collisions are what force the matcher to use
-# narration evidence -- i.e. what the LLM adjudication path exists for.
+# in this project meaningless. Clustering amounts onto price points is what
+# creates genuine collisions, and collisions are what force reconciliation to
+# use the rest of the evidence rather than treating amount as an identifier.
 PRICE_POINTS: tuple[Decimal, ...] = tuple(
     Decimal(v) for v in (
         "49", "99", "149", "199", "249", "299", "349", "399", "449", "499",
@@ -125,38 +152,26 @@ PRICE_POINTS: tuple[Decimal, ...] = tuple(
     )
 )
 
-# Non-INR transactions settle to INR at a rate with a spread applied.
-FX_RATES: dict[str, Decimal] = {
-    "USD": Decimal("87.40"),
-    "EUR": Decimal("94.15"),
-    "GBP": Decimal("110.80"),
-    "AED": Decimal("23.80"),
-}
-FX_SPREAD = Decimal("0.0125")  # 1.25% markup retained by the PA
-
 
 @dataclass(frozen=True)
 class GenConfig:
-    """A complete, reproducible description of one synthetic dataset."""
+    """A complete description of a dataset, including its deterministic clock."""
 
     n_records: int = 500
     seed: int = 42
-    defect_rate: float = 0.30
+    family: Family = Family.PRIMARY
 
     start_date: date = date(2026, 6, 1)
     horizon_days: int = 45
-
-    # Settlement timing
-    standard_lag_days: int = 1          # T+1 is the happy path
-    offset_lag_choices: tuple[int, ...] = (0, 2, 3, 4)
+    standard_lag_days: int = 1
+    recovery_window_days: int = 4
     skip_weekend_settlement: bool = True
 
-    # Fraction of INR tickets that snap to a catalogue price point rather than
-    # being drawn from the continuous bands below.  Tune this and the intrinsic
-    # ambiguity floor moves with it; `make ambiguity` reports the resulting rate.
+    # This 0.45 is load-bearing: changing it changes the amount-collision floor.
     price_point_share: float = 0.45
 
-    # Amount distribution (INR, lognormal-ish via explicit bands)
+    # Amount distribution (INR, lognormal-ish via explicit bands). The float
+    # weights select a band only; generated money is drawn as integer paise.
     amount_bands: tuple[tuple[int, int, float], ...] = (
         (50, 500, 0.30),
         (500, 5_000, 0.42),
@@ -164,25 +179,22 @@ class GenConfig:
         (50_000, 400_000, 0.06),
     )
 
-    many_to_one_batch_size: tuple[int, int] = (2, 8)
-    rounding_paise: tuple[int, int] = (1, 5)
-    partial_refund_fraction: tuple[float, float] = (0.10, 0.60)
-
-    defect_weights: dict[Scenario, float] = field(
-        default_factory=lambda: dict(DEFAULT_DEFECT_WEIGHTS)
-    )
-
     def __post_init__(self) -> None:
-        if self.n_records < 1:
-            raise ValueError("n_records must be >= 1")
-        if not 0.0 <= self.defect_rate <= 1.0:
-            raise ValueError("defect_rate must be in [0, 1]")
+        if isinstance(self.family, str):
+            object.__setattr__(self, "family", Family(self.family))
+        if self.n_records < 3:
+            raise ValueError("n_records must be >= 3 because every case has 3-7 events")
+        if self.horizon_days < 1:
+            raise ValueError("horizon_days must be >= 1")
         if not 0.0 <= self.price_point_share <= 1.0:
             raise ValueError("price_point_share must be in [0, 1]")
-        if not self.defect_weights:
-            raise ValueError("defect_weights must not be empty")
-        if any(w < 0 for w in self.defect_weights.values()):
-            raise ValueError("defect weights must be non-negative")
-        lo, hi = self.many_to_one_batch_size
-        if lo < 2 or hi < lo:
-            raise ValueError("many_to_one_batch_size must be (lo>=2, hi>=lo)")
+        if self.recovery_window_days < 0:
+            raise ValueError("recovery_window_days must be non-negative")
+
+    @property
+    def case_shares(self) -> tuple[tuple[Scenario, int], ...]:
+        if self.family is Family.STRESS:
+            return STRESS_CASE_SHARES
+        if self.family is Family.DEVELOPMENT:
+            return DEVELOPMENT_CASE_SHARES
+        return PRIMARY_CASE_SHARES

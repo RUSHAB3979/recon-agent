@@ -1,0 +1,33 @@
+{
+  "batch_id": "batch_stress_101",
+  "expected_outcome_case_counts": {
+    "ABSTAIN": 6,
+    "EXCEPTION": 27,
+    "NO_ACTION": 3,
+    "RECONCILED": 64
+  },
+  "family": "stress",
+  "generated_at": "2026-06-01T00:00:00",
+  "n_allocations": 440,
+  "n_bank_rows": 112,
+  "n_cases": 100,
+  "n_gateway_events": 500,
+  "n_gateway_rows": 500,
+  "n_records_requested": 500,
+  "n_settlement_detail_rows": 454,
+  "n_settlements": 114,
+  "scenario_case_counts": {
+    "AMBIGUOUS_REFUND": 6,
+    "BANK_CREDIT_DUPLICATE": 5,
+    "BANK_CREDIT_MISSING": 7,
+    "CAPTURED_UNSETTLED": 7,
+    "CONTESTED_REFUND": 14,
+    "CORROBORATED_REFUND": 10,
+    "DUPLICATE_DETAIL_EXPORT": 10,
+    "FEE_TAX_VARIANCE": 8,
+    "NOT_SETTLEABLE": 3,
+    "REFUND_LATER_CYCLE": 10,
+    "STRAIGHT_THROUGH": 20
+  },
+  "seed": 101
+}
