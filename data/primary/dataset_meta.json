@@ -8,7 +8,7 @@
   },
   "family": "primary",
   "generated_at": "2026-06-01T00:00:00",
-  "n_allocations": 416,
+  "n_allocations": 422,
   "n_bank_rows": 106,
   "n_cases": 100,
   "n_gateway_events": 500,

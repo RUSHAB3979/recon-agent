@@ -61,6 +61,9 @@ import csv
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from recon.metrics.score import AgentOutput, AnswerKey, CaseDecision, ScoreReport
+from recon.metrics.score import score as shared_score
 from typing import Callable, Optional, TypedDict
 
 # A hook that decides whether an anonymous settlement detail line can be
@@ -373,8 +376,35 @@ def b1_case(
     )
 
 
+def _joined_allocations(batch: Batch, case: dict[str, str]) -> list[tuple[str, str]]:
+    """Every (settlement_id, event_id) pair an exact join already establishes.
+
+    A detail line that carries an event_id is not an inference -- the export
+    states the attribution outright.  B1 is allowed exact joins, so it must
+    claim these, and claiming them is what makes allocation recall comparable
+    between the floor and the agent.  A baseline that asserted only the handful
+    of pairs it had to guess would post a near-perfect allocation precision by
+    volunteering nothing, which flatters the floor in exactly the direction that
+    makes the agent look better than it is.
+
+    Duplicate export lines repeat a pair; the caller collapses them, because a
+    pair asserted twice is one attribution, not two.
+    """
+    pairs: list[tuple[str, str]] = []
+    for settlement_id in _split(case["settlement_ids"]):
+        for line in batch.detail_by_settlement.get(settlement_id, []):
+            if line["event_id"]:
+                pairs.append((settlement_id, line["event_id"]))
+    return pairs
+
+
 def run_b1(batch: Batch) -> list[Verdict]:
-    return [b1_case(batch, case) for case in batch.cases]
+    verdicts = []
+    for case in batch.cases:
+        verdict = b1_case(batch, case)
+        verdict.claims.extend(_joined_allocations(batch, case))
+        verdicts.append(verdict)
+    return verdicts
 
 
 def _unconsumed_refunds(batch: Batch) -> dict[int, list[str]]:
@@ -438,6 +468,7 @@ def run_b2(batch: Batch) -> list[Verdict]:
     verdicts = []
     for case in batch.cases:
         verdict = b1_case(batch, case, recover)
+        verdict.claims.extend(_joined_allocations(batch, case))
         for sid in _split(case["settlement_ids"]):
             verdict.claims.extend(claimed.get(sid, []))
         verdicts.append(verdict)
@@ -473,6 +504,43 @@ def score(batch: Batch, verdicts: list[Verdict]) -> ScoreResult:
         "per_scenario": {k: (v[0], v[1]) for k, v in sorted(per_scenario.items())},
     }
 
+
+
+def to_agent_output(verdicts: list[Verdict]) -> AgentOutput:
+    """Translate baseline verdicts into the vocabulary the shared scorer reads.
+
+    The one thing worth stating: a Verdict records a claim as
+    ``(settlement_id, event_id)`` while the answer key\'s Allocation is
+    ``(event_id, settlement_id)``.  Both are ``tuple[str, str]``, so a
+    transposition type-checks cleanly and then scores every claim as a false
+    positive and every truth as a false negative -- halving two published
+    numbers with nothing to show for it.  The flip happens here, once, rather
+    than at each call site where it could be forgotten.
+    """
+    return AgentOutput(
+        CaseDecision(
+            case_id=verdict.case_id,
+            outcome=verdict.outcome,
+            category=verdict.category,
+            allocations=frozenset(
+                (event_id, settlement_id) for settlement_id, event_id in verdict.claims
+            ),
+            confidence=1.0,
+            reasons=tuple(verdict.reasons),
+        )
+        for verdict in verdicts
+    )
+
+
+def score_shared(data_dir: Path, verdicts: list[Verdict]) -> ScoreReport:
+    """Score a baseline through the SAME instrument that scores the agent.
+
+    ONE SCORER, TWO CONSUMERS.  If the floor were computed by one scorer and the
+    agent by another, the difference between them would not be attributable to
+    capability, and the headline claim of this project -- that the agent beats a
+    measured floor -- would stop meaning anything.
+    """
+    return shared_score(to_agent_output(verdicts), AnswerKey.load(data_dir))
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(

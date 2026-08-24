@@ -104,8 +104,28 @@ class CaseDecision:
         category = _optional_text(self.category, "category")
         if outcome == _EXCEPTION and category is None:
             raise ValueError("category is required when outcome is EXCEPTION")
-        if outcome != _EXCEPTION and category is not None:
-            raise ValueError("category is allowed only when outcome is EXCEPTION")
+        # The answer key admits two non-EXCEPTION labels, so the agent side must
+        # admit them too or the two halves of the scorer disagree about what a
+        # legal decision is.  DUPLICATE_DETAIL_EXPORT_WARNING rides on
+        # RECONCILED cases, and an abstention carries the reason it declined.
+        # Rejecting those here made eight cases per batch impossible to report
+        # correctly no matter what the agent had worked out -- constructing the
+        # decision raised before scoring could begin.
+        #
+        # Admitting them cannot inflate exception precision: the category
+        # metrics select cases with outcome == EXCEPTION on both the expected
+        # and the predicted side, so a warning or an abstention reason never
+        # enters that tally.
+        if (
+            outcome == _RECONCILED
+            and category is not None
+            and not category.endswith("_WARNING")
+        ):
+            raise ValueError(
+                "a RECONCILED case may carry only a _WARNING diagnostic category"
+            )
+        if outcome == _NO_ACTION and category is not None:
+            raise ValueError("category is not allowed when outcome is NO_ACTION")
         object.__setattr__(self, "category", category)
 
         try:
