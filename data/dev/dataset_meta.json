@@ -8,7 +8,7 @@
   },
   "family": "development",
   "generated_at": "2026-06-01T00:00:00",
-  "n_allocations": 421,
+  "n_allocations": 431,
   "n_bank_rows": 111,
   "n_cases": 100,
   "n_gateway_events": 500,

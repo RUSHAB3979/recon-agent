@@ -656,9 +656,19 @@ class Generator:
         assert {
             allocation.settlement_id for allocation in admissible_allocations
         } == {target.settlement_id}
-        assert not {
-            event.event_id for event, _ in distractors
-        } & allocated_event_ids
+        # A distractor may never be allocated to the TARGET settlement -- that
+        # would make it a second legitimate answer to the contested delta and
+        # destroy the uniqueness the case is built to test.  It may however be
+        # allocated elsewhere, and a GATE_1 distractor always is: failing gate 1
+        # MEANS some other settlement already consumed it, and that consumption
+        # is a fact the export states. Asserting it was allocated nowhere at all
+        # is what left those pairs out of the key.
+        distractor_ids = {event.event_id for event, _ in distractors}
+        assert not distractor_ids & {
+            allocation.event_id
+            for allocation in allocations
+            if allocation.settlement_id == target.settlement_id
+        }
 
     def _contested_refund_case(self, case_id: str, n_events: int) -> _BuiltCase:
         archetypes = self._draw_contested_archetypes(n_events)
@@ -796,7 +806,18 @@ class Generator:
                 target_summary,
                 target_bank,
             ),
-            *self._allocations([parent.event_id], support_summary, support_bank),
+            # The support settlement consumes the gate-1 distractors, and
+            # consuming one means its detail line names the event outright.
+            # Registering only the parent left those pairs absent from the key
+            # while present in the export, so an agent that simply read the
+            # file was scored as having invented them -- the published
+            # false-match rate was measuring an incomplete key rather than any
+            # error the agent made.
+            *self._allocations(
+                [parent.event_id, *(event.event_id for event in gate1_refunds)],
+                support_summary,
+                support_bank,
+            ),
         ]
         self._assert_contested_draw(
             recovery_amount=recovery_amount,
@@ -1013,9 +1034,17 @@ class Generator:
                         and event.event_type == "REFUND"
                         and event.amount_paise == amount
                     }
-                    assert not (
-                        case_refunds - {survivors[0].event_id}
-                    ) & allocated_event_ids
+                    # Same narrowing as the per-case check: a losing candidate
+                    # must not be allocated to the settlement carrying the
+                    # anonymous line, because that would give the delta a second
+                    # valid answer.  Being allocated to a DIFFERENT settlement is
+                    # exactly how a gate-1 candidate loses, and the key has to
+                    # say so -- the export already does.
+                    assert not (case_refunds - {survivors[0].event_id}) & {
+                        allocation.event_id
+                        for allocation in allocations
+                        if allocation.settlement_id == detail.settlement_id
+                    }
                 else:
                     ambiguous_amounts.add(amount)
                     assert len(survivors) >= 2

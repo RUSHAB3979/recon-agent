@@ -8,7 +8,7 @@
   },
   "family": "stress",
   "generated_at": "2026-06-01T00:00:00",
-  "n_allocations": 440,
+  "n_allocations": 452,
   "n_bank_rows": 112,
   "n_cases": 100,
   "n_gateway_events": 500,

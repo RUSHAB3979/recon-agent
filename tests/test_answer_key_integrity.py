@@ -377,7 +377,18 @@ def _assert_contested_refunds(dataset: Dataset) -> None:
         assert {
             allocation.settlement_id for allocation in survivor_allocations
         } == {recovery["settlement_id"]}
-        assert not set(labels) & allocated_event_ids
+        # A distractor must not be allocated to the settlement carrying the
+        # contested delta -- that would hand the delta a second valid answer.
+        # It may be allocated elsewhere, and a GATE_1 distractor always is:
+        # failing gate 1 MEANS another settlement already consumed it, and the
+        # export says so on a detail line. Requiring it to be allocated nowhere
+        # deleted those pairs from the key, so an agent that merely read the
+        # export was scored as having invented them.
+        assert not set(labels) & {
+            allocation.event_id
+            for allocation in dataset.allocations
+            if allocation.settlement_id == recovery["settlement_id"]
+        }
         for event_id, label in labels.items():
             named_gate = "_".join(label.split("_")[:2])
             assert named_gate in {"GATE_1", "GATE_3", "GATE_5"}
@@ -551,12 +562,6 @@ def _assert_allocations(dataset: Dataset) -> None:
         bank_by_utr[row.utr].append(row)
     for detail in _unique_details(dataset):
         if detail.event_id is None:
-            continue
-        if detail.event_id in contested_distractor_ids:
-            assert not any(
-                allocation.event_id == detail.event_id
-                for allocation in dataset.allocations
-            )
             continue
         summary = summaries[detail.settlement_id]
         bank_rows = bank_by_utr[summary.utr]
