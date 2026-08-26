@@ -23,7 +23,17 @@ import pytest
 from recon.datagen import Family, GenConfig, generate
 from recon.datagen.entities import round_half_up as generator_round
 from recon.datagen.io import write_dataset
-from recon.metrics.baselines import Batch, round_half_up, run_b1, run_b2, score
+from recon.metrics.baselines import (
+    Batch,
+    lexical_separation,
+    lexical_similarity,
+    lexical_hit_rate,
+    round_half_up,
+    run_b1,
+    run_b2,
+    run_b3,
+    score,
+)
 
 # The two classes B1 cannot solve.  Everything else it must solve completely --
 # see the module docstring for why the split, not the total, is the claim.
@@ -31,11 +41,13 @@ REFUND_ATTRIBUTION_CLASSES = {
     "CORROBORATED_REFUND",
     "CONTESTED_REFUND",
     "AMBIGUOUS_REFUND",
+    "DESCRIBED_REFUND",
 }
 
 # Classes B2 must still fail.  CONTESTED_REFUND needs gate 9 (no second
-# candidate survives) and AMBIGUOUS_REFUND needs abstention; B2 has neither.
-SURVIVES_B2 = {"CONTESTED_REFUND", "AMBIGUOUS_REFUND"}
+# candidate survives), AMBIGUOUS_REFUND needs abstention, and DESCRIBED_REFUND
+# needs the settlement note to be read; B2 has none of the three.
+SURVIVES_B2 = {"CONTESTED_REFUND", "AMBIGUOUS_REFUND", "DESCRIBED_REFUND"}
 
 
 def _b1(tmp_path_factory, seed: int, family: Family):
@@ -53,6 +65,16 @@ def primary_b1(request, tmp_path_factory):
 @pytest.fixture(scope="session", params=[42, 7, 99, 2026], ids=lambda s: f"seed{s}")
 def stress_b1(request, tmp_path_factory):
     return _b1(tmp_path_factory, request.param, Family.STRESS)
+
+
+@pytest.fixture(scope="session")
+def all_seed_batches(tmp_path_factory):
+    """Every seed and family in one list, for claims that need the pooled sample."""
+    return [
+        _b1(tmp_path_factory, seed, family)[0]
+        for seed in (42, 7, 99, 2026)
+        for family in (Family.PRIMARY, Family.STRESS)
+    ]
 
 
 # --------------------------------------------------------------------------
@@ -293,3 +315,94 @@ def test_b2_makes_false_attributions(primary_b1, stress_b1):
         assert result["false_attributions"] > 0, (
             "B2 attributed every delta correctly -- amount alone is still decisive"
         )
+
+
+# --------------------------------------------------------------------------
+# B3 -- the lexical baseline, published because it is expected to fail
+# --------------------------------------------------------------------------
+
+
+def test_content_token_overlap_is_zero_on_every_contested_line(primary_b1, stress_b1):
+    """The claim "string similarity has nothing to rank on", measured.
+
+    ``recon.datagen.catalogue`` proves the two vocabularies are disjoint at
+    import, but that is a property of the catalogue, not of the emitted CSVs.
+    This asserts it end to end: on released data, for every anonymous refund
+    line with more than one exact-amount candidate, no candidate's product
+    description shares a single content token with the settlement note.
+    """
+    for batch, _ in (primary_b1, stress_b1):
+        separation = lexical_separation(batch)
+        assert separation["contested_lines"] > 0, (
+            "no multi-candidate refund lines -- the measurement is vacuous"
+        )
+        assert separation["max_token_overlap"] == 0
+
+
+def test_lexical_ranking_performs_at_chance(primary_b1, stress_b1):
+    """The claim, measured on the decision rather than on the case count.
+
+    Comparing B3's case accuracy against B2's is the wrong instrument: a
+    different tie-break consumes a different event, which shifts what later
+    lines can claim, so the two baselines swing several cases apart for reasons
+    unrelated to ranking quality.  On one seed B3 came out four cases ahead of
+    B2 that way, which measured the knock-on effect and not the strings.
+
+    This measures the decision directly.  Over every multi-candidate refund line
+    that has a knowable answer, lexical ranking must land within noise of the
+    coin-flip rate.  The band is wide because the sample is a few dozen lines
+    and a binomial at that size moves; what would falsify the design is a
+    consistent positive lift, not a seed that runs warm.
+    """
+    for batch, _ in (primary_b1, stress_b1):
+        hit = lexical_hit_rate(batch)
+        assert hit["decidable_lines"] >= 5, "sample too small to say anything"
+        assert abs(hit["lift"]) < 0.25, (
+            f"lexical ranking hit {hit['hits']} of {hit['decidable_lines']} against "
+            f"{hit['expected_by_chance']:.1f} expected -- string similarity is "
+            "carrying signal it should not have"
+        )
+
+
+def test_lexical_lift_does_not_accumulate_across_seeds(all_seed_batches):
+    """One warm seed is noise; a positive lift on the pooled sample is not.
+
+    Pooling the four seeds and both families multiplies the sample by eight,
+    which is what turns "within the band" into an actual statement.  If string
+    similarity carried even weak signal it would survive the pooling, and this
+    is the assertion that would catch it.
+    """
+    hits = 0
+    expected = 0.0
+    lines = 0
+    for batch in all_seed_batches:
+        hit = lexical_hit_rate(batch)
+        hits += hit["hits"]
+        expected += hit["expected_by_chance"]
+        lines += hit["decidable_lines"]
+    assert lines >= 100
+    assert abs(hits - expected) / lines < 0.10, (
+        f"pooled over {lines} decidable lines, lexical ranking hit {hits} "
+        f"against {expected:.1f} expected by chance"
+    )
+
+
+def test_lexical_margin_between_candidates_is_noise(primary_b1):
+    """What is left after the tokens are gone is incidental letter overlap."""
+    batch, _ = primary_b1
+    separation = lexical_separation(batch)
+    assert separation["mean_margin"] < 0.15
+    assert separation["max_margin"] < 0.40
+
+
+def test_lexical_similarity_is_zero_on_an_empty_side():
+    assert lexical_similarity("", "Puma Smash v2 sneakers") == 0.0
+    assert lexical_similarity("return - footwear size mismatch", "") == 0.0
+
+
+def test_b3_still_commits_to_every_case(primary_b1):
+    """B3 is a floor, not an agent: it may not abstain either."""
+    batch, _ = primary_b1
+    verdicts = run_b3(batch)
+    assert len(verdicts) == len(batch.cases)
+    assert all(v.outcome != "ABSTAIN" for v in verdicts)

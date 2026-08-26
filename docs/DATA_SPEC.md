@@ -61,10 +61,18 @@ positive-valued `REFUND` row sharing the payment's `txn_id` and `order_id`.
 | `status` | `CREATED`, `FAILED`, `CAPTURED`, or `PROCESSED` |
 | `created_at` | ISO 8601 timestamp |
 | `method` | string |
+| `description` | merchant catalogue string; **populated on every `PAYMENT`, empty on every `REFUND`** |
 
 `CREATED` and `FAILED` do not settle. `CAPTURED` should settle but has not.
 `PROCESSED` has settled, including refunds represented by anonymous settlement
-detail lines in the three refund-recovery scenarios.
+detail lines in the four refund-recovery scenarios.
+
+`description` is the semantic evidence channel and its population rule is load
+bearing. It is on **every** payment, including payments in scenarios where it
+decides nothing, because a field present only where it matters would identify
+the hard cases by its own presence. It is on **no** refund, because a refund
+row references its payment rather than the catalogue; recovering the category of
+a refund therefore costs a lineage hop through `txn_id`.
 
 ### `settlement_detail.csv`
 
@@ -80,7 +88,23 @@ detail lines in the three refund-recovery scenarios.
 | `net_effect_paise` | integer |
 | `settled_at` | ISO 8601 timestamp |
 | `currency` | `INR` |
-| `reference_text` | string or empty |
+| `reference_text` | string | free-text operations note; **populated on every line** |
+
+`reference_text` contains no identifier, no reference token, and no product
+name. On a `REFUND` line it is a reason note written in the vocabulary of the
+category the original purchase belongs to (`return - footwear size mismatch`);
+on a `PAYMENT` line it is a neutral phrase that carries nothing. As with
+`description`, it is populated everywhere so that its presence separates
+nothing.
+
+The two vocabularies are **lexically disjoint by construction**: no content
+token of any refund note appears in any product description.
+`recon.datagen.catalogue.assert_no_lexical_leak` proves this at import time
+rather than in a test, because a dataset generated from a leaking catalogue
+would be silently easier and no test running afterwards would say so. The
+measured consequence is published by `make baseline`: across all three families
+the maximum content-token overlap between a note and any candidate's product
+description is **0**, and the B3 lexical baseline ranks candidates at chance.
 
 ### `settlement_summary.csv`
 
@@ -191,8 +215,9 @@ ties.
 
 | Scenario | Development | Primary | Stress | Expected outcome |
 |---|---:|---:|---:|---|
-| `STRAIGHT_THROUGH` | 26% | 48% | 20% | `RECONCILED` |
+| `STRAIGHT_THROUGH` | 16% | 37% | 10% | `RECONCILED` |
 | `CONTESTED_REFUND` | 14% | 8% | 14% | `RECONCILED` |
+| `DESCRIBED_REFUND` | 10% | 6% | 10% | `RECONCILED` |
 | `REFUND_LATER_CYCLE` | 9% | 10% | 10% | `RECONCILED` |
 | `DUPLICATE_DETAIL_EXPORT` | 9% | 8% | 10% | `RECONCILED` with warning |
 | `CORROBORATED_REFUND` | 10% | 6% | 10% | `RECONCILED` |
@@ -216,6 +241,31 @@ parent lineage (gate 5) are applied. `AMBIGUOUS_REFUND` pairs deltas and
 candidates so at least two global allocations still survive those gates; no
 frequency or prior breaks the tie.
 
+`DESCRIBED_REFUND` is structurally identical to `AMBIGUOUS_REFUND` and is
+separated from it only by evidence no arithmetic rule can read. Both build two
+parent payments, two refunds of the same amount, and two settlements each
+carrying one anonymous refund line, so every gate leaves exactly two survivors
+and the deterministic ladder abstains. The single difference is the product
+category:
+
+- in `AMBIGUOUS_REFUND` both parents come from the **same** catalogue category,
+  so the settlement note is present, on-topic, and separates nothing;
+- in `DESCRIBED_REFUND` the parents come from **different** categories and each
+  note names one of them, so exactly one candidate is correct and it is knowable.
+
+The answer key reflects that asymmetry. `AMBIGUOUS_REFUND` leaves its refund
+events unallocated, so any claim on them scores as a false attribution;
+`DESCRIBED_REFUND` allocates them, so declining scores as a miss. An agent that
+always resolves scores zero on the first class, one that always declines scores
+zero on the second, and only one that reads the note scores on both.
+
+Both properties are proved per seed by
+`Generator._assert_recovery_class_distinction`, which reads the category back
+off the emitted `description` rather than off the generator's own bookkeeping:
+for every described line exactly one surviving candidate must trace to a payment
+in the note's category, and for every ambiguous line **all** surviving
+candidates must.
+
 Contested-case notes record every distractor as
 `event_id:GATE_1_CONSUMED`, `event_id:GATE_3_TOO_OLD`,
 `event_id:GATE_3_AFTER_SETTLEMENT`, or
@@ -233,8 +283,43 @@ candidates those gates eliminate. The legacy `candidate_multiplicities`,
 `ambiguous`, and `ambiguity_rate` values remain the after-gates view so existing
 statistics tooling keeps its meaning.
 
+## Published baselines
+
+`make baseline` runs three, in increasing strength, and prints them per family.
+
+| Baseline | What it may do |
+|---|---|
+| B1 | exact joins, dedup, fee/tax validation, control equations, lifecycle disposition |
+| B2 | B1 plus one rule: attribute an anonymous refund line to any unconsumed refund event whose amount reproduces it exactly |
+| B3 | B2 with its arbitrary tie-break replaced by the strongest cheap lexical ranking — content-token Jaccard or character sequence ratio, whichever is higher |
+
+Quote match rates against **B2**, not B1: B1 is forbidden refund recovery by
+rule, and measuring against it would answer a question nobody asked.
+
+B3 exists to be run by a sceptic who says the note column means a language model
+was never needed, only fuzzy string matching. It is published because it is
+expected to fail, and the claim is worth nothing until the string matcher has
+been run and its number printed. Its accuracy is not the measurement — a
+different tie-break consumes different events and shifts what later lines can
+claim, so B3's case count swings a few either side of B2 for reasons unrelated
+to ranking. The measurement is `lexical_hit_rate`: over every multi-candidate
+refund line with a knowable answer, how often the top-ranked candidate is the
+right one, against the sum of 1/k expected from a k-sided coin. On the released
+data that lift is negative on all three families.
+
 ## Honest limitation
 
 The held-out set is a different seed from the same generator. It measures
 whether tolerances were overfitted. It does **not** measure robustness to real
 bank data, because the same code writes both the defects and their labels.
+
+`DESCRIBED_REFUND` carries a second limitation worth stating before anyone asks.
+Real operations notes sometimes *do* quote the product name, and those cases
+would be lexically solvable. Forcing token overlap to exactly zero isolates the
+semantic channel rather than simulating how often it occurs, so the class
+measures whether an agent can read — not how often real reconciliation needs it
+to. A hand-written map from brand and product name to category would also close
+the class deterministically; it would simply need an entry for every product in
+every merchant's catalogue and would go stale on every catalogue change. That is
+an argument about maintenance cost, not about capability, and it is stated as
+one.

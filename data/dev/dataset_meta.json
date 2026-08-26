@@ -8,14 +8,14 @@
   },
   "family": "development",
   "generated_at": "2026-06-01T00:00:00",
-  "n_allocations": 431,
-  "n_bank_rows": 111,
+  "n_allocations": 423,
+  "n_bank_rows": 121,
   "n_cases": 100,
   "n_gateway_events": 500,
   "n_gateway_rows": 500,
   "n_records_requested": 500,
-  "n_settlement_detail_rows": 444,
-  "n_settlements": 112,
+  "n_settlement_detail_rows": 436,
+  "n_settlements": 122,
   "scenario_case_counts": {
     "AMBIGUOUS_REFUND": 8,
     "BANK_CREDIT_DUPLICATE": 3,
@@ -23,11 +23,12 @@
     "CAPTURED_UNSETTLED": 6,
     "CONTESTED_REFUND": 14,
     "CORROBORATED_REFUND": 10,
+    "DESCRIBED_REFUND": 10,
     "DUPLICATE_DETAIL_EXPORT": 9,
     "FEE_TAX_VARIANCE": 6,
     "NOT_SETTLEABLE": 5,
     "REFUND_LATER_CYCLE": 9,
-    "STRAIGHT_THROUGH": 26
+    "STRAIGHT_THROUGH": 16
   },
   "seed": 42
 }

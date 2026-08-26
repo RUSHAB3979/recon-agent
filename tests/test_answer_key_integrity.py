@@ -606,17 +606,25 @@ def _assert_schema_and_money(dataset: Dataset) -> None:
 
 def test_primary_schema_counts_money_and_shares(dataset):
     _assert_schema_and_money(dataset)
+    # Every one of the twelve classes has to appear in the headline family.
+    # BANK_CREDIT_MISSING and BANK_CREDIT_DUPLICATE were absent here until the
+    # shares were corrected, which let an agent with no bank-side handling at
+    # all score identically on the published number.
     assert dataset.summary() == {
         "AMBIGUOUS_REFUND": 4,
+        "BANK_CREDIT_DUPLICATE": 2,
+        "BANK_CREDIT_MISSING": 3,
         "CAPTURED_UNSETTLED": 6,
         "CONTESTED_REFUND": 8,
         "CORROBORATED_REFUND": 6,
+        "DESCRIBED_REFUND": 6,
         "DUPLICATE_DETAIL_EXPORT": 8,
         "FEE_TAX_VARIANCE": 4,
         "NOT_SETTLEABLE": 6,
         "REFUND_LATER_CYCLE": 10,
-        "STRAIGHT_THROUGH": 48,
+        "STRAIGHT_THROUGH": 37,
     }
+    assert set(dataset.summary()) == {scenario.value for scenario in Scenario}
 
 
 def test_stress_schema_counts_money_and_shares(stress_dataset):
@@ -628,11 +636,12 @@ def test_stress_schema_counts_money_and_shares(stress_dataset):
         "CAPTURED_UNSETTLED": 7,
         "CONTESTED_REFUND": 14,
         "CORROBORATED_REFUND": 10,
+        "DESCRIBED_REFUND": 10,
         "DUPLICATE_DETAIL_EXPORT": 10,
         "FEE_TAX_VARIANCE": 8,
         "NOT_SETTLEABLE": 3,
         "REFUND_LATER_CYCLE": 10,
-        "STRAIGHT_THROUGH": 20,
+        "STRAIGHT_THROUGH": 10,
     }
 
 
@@ -645,9 +654,10 @@ def test_all_case_share_tables_are_complete_integer_percentages():
         assert sum(share for _, share in shares) == 100
     assert {scenario for scenario, _ in DEVELOPMENT_CASE_SHARES} == set(Scenario)
     assert dict(DEVELOPMENT_CASE_SHARES) == {
-        Scenario.STRAIGHT_THROUGH: 26,
+        Scenario.STRAIGHT_THROUGH: 16,
         Scenario.CONTESTED_REFUND: 14,
         Scenario.CORROBORATED_REFUND: 10,
+        Scenario.DESCRIBED_REFUND: 10,
         Scenario.REFUND_LATER_CYCLE: 9,
         Scenario.DUPLICATE_DETAIL_EXPORT: 9,
         Scenario.AMBIGUOUS_REFUND: 8,

@@ -36,6 +36,7 @@ from .entities import (
     SettlementSummary,
     round_half_up,
 )
+from .catalogue import CATEGORIES, PRODUCTS, REFUND_NOTES, category_of
 from .narration import settlement_narration
 
 ALNUM = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
@@ -45,6 +46,18 @@ CONTESTED_DISTRACTOR_ARCHETYPES = ("GATE_1", "GATE_3", "GATE_5")
 # Starting just above that ceiling makes the batch-global cardinality proof
 # constructive rather than vulnerable to an unrelated random refund collision.
 CONTESTED_AMOUNT_BASE_PAISE = 10_000_100
+# Same trick, a decade higher, for the same reason: a described pair must not
+# collide with a contested amount, an ambiguous amount, or an unrelated random
+# refund, or the batch-global cardinality proof stops being constructive.
+# Disjointness is asserted per seed rather than assumed.
+DESCRIBED_AMOUNT_BASE_PAISE = 20_000_100
+
+# Payment lines carry a note too. It has to be there -- a reference_text
+# populated only on the hard lines would identify them by its own presence, and
+# the agent could then tell a resolvable line from an unresolvable one without
+# reading either. These phrasings deliberately carry nothing.
+PAYMENT_LINE_NOTES = ("sale settlement", "settlement credit", "card sale credit")
+UNATTRIBUTED_REFUND_NOTE = "refund adjustment"
 
 
 @dataclass(frozen=True)
@@ -120,6 +133,13 @@ class Generator:
         self._corroborated_seq = 0
         self._contested_seq = 0
         self._contested_gate3_seq = 0
+        self._described_seq = 0
+        # txn_id -> catalogue category of the payment that opened it. A refund
+        # row carries no description of its own -- it references its payment,
+        # not the catalogue -- so a settlement line for a refund has to reach
+        # the category through the transaction. That hop is deliberate: it is
+        # what makes the evidence require lineage rather than a column read.
+        self._txn_category: dict[str, str] = {}
 
     # ---------- deterministic planning ----------
 
@@ -174,6 +194,10 @@ class Generator:
                 # lineage, a positive target settlement, and a gate-5 parent.
                 minimum_sizes.append(5)
             elif scenario is Scenario.AMBIGUOUS_REFUND and len(ambiguous_indexes) == 1:
+                minimum_sizes.append(4)
+            elif scenario is Scenario.DESCRIBED_REFUND:
+                # Both halves of the collision live in one case: two parents and
+                # two refunds, with nothing left over.
                 minimum_sizes.append(4)
             else:
                 minimum_sizes.append(3)
@@ -252,17 +276,26 @@ class Generator:
         status: str = "PROCESSED",
         amount_paise: int | None = None,
         method: str | None = None,
+        category: str | None = None,
     ) -> GatewayEvent:
+        # Every payment gets a catalogue description, not only the ones whose
+        # category is load-bearing. A field populated selectively would let an
+        # agent find the hard cases by looking for the populated field, which
+        # would hand it the answer to the question the field exists to ask.
+        chosen = category or self.rng.choice(CATEGORIES)
+        txn_id = self.ids.txn_id()
+        self._txn_category[txn_id] = chosen
         return GatewayEvent(
             event_id=self.ids.event_id(),
             event_type="PAYMENT",
-            txn_id=self.ids.txn_id(),
+            txn_id=txn_id,
             order_id=self.ids.order_id(),
             amount_paise=amount_paise if amount_paise is not None else self._draw_amount_paise(),
             currency="INR",
             status=status,
             created_at=created_at,
             method=method or self._draw_method(),
+            description=self.rng.choice(PRODUCTS[chosen]),
         )
 
     def _refund(
@@ -311,8 +344,29 @@ class Generator:
             net_effect_paise=gross - fee - tax,
             settled_at=settled_at,
             currency=event.currency,
-            reference_text=None,
+            reference_text=self._reference_text(event),
         )
+
+    def _reference_text(self, event: GatewayEvent) -> str:
+        """The operations note a settlement team would write on this line.
+
+        Refund lines get a reason note in the vocabulary of the category the
+        original purchase belongs to. Payment lines get a note that says
+        nothing, because they must carry one: a column present only on refund
+        lines would separate the anonymous refunds from everything else without
+        anyone reading a word of it.
+
+        The note never contains a reference, an identifier, or a product name.
+        It shares no token with any catalogue string -- ``catalogue`` proves
+        that at import -- so the bridge from note to payment is world knowledge
+        and nothing else.
+        """
+        if event.event_type != "REFUND":
+            return self.rng.choice(PAYMENT_LINE_NOTES)
+        category = self._txn_category.get(event.txn_id)
+        if category is None:
+            return UNATTRIBUTED_REFUND_NOTE
+        return self.rng.choice(REFUND_NOTES[category])
 
     def _summary(
         self,
@@ -850,9 +904,27 @@ class Generator:
         day = self.cfg.start_date + timedelta(days=(group * 3) % span)
         return datetime.combine(day, time(10, 0))
 
+    def _ambiguous_category(self, group: int) -> str:
+        """The single category both halves of an ambiguous pair must share.
+
+        A function of the group rather than of the case, because the two
+        colliding refunds usually live in two different cases and never see one
+        another. Derived deterministically for the same reason ``_ambiguous_time``
+        is: it is the only way two independently built cases can agree without
+        passing state between them.
+
+        Sharing the category is what keeps this class unresolvable now that
+        every line carries an operations note. If the two parents came from
+        different categories the note would name one of them, and AMBIGUOUS
+        would quietly become DESCRIBED -- an agent rewarded for resolving a case
+        the answer key says it must decline.
+        """
+        return CATEGORIES[group % len(CATEGORIES)]
+
     def _ambiguous_refund_case(self, case_id: str, item: _PlanItem) -> _BuiltCase:
         assert item.ambiguous_group is not None
         created_at = self._ambiguous_time(item.ambiguous_group)
+        category = self._ambiguous_category(item.ambiguous_group)
         recovery_amount = 2_500 + item.ambiguous_group
         pair_count = 2 if item.single_ambiguous_case else 1
 
@@ -863,6 +935,7 @@ class Generator:
                 created_at=created_at + timedelta(minutes=offset),
                 amount_paise=max(self._draw_amount_paise(), recovery_amount * 4, 5_000),
                 method="upi",
+                category=category,
             )
             parents.append(parent)
             refunds.append(
@@ -909,7 +982,102 @@ class Generator:
             events,
             summaries,
             bank,
-            "each anonymous refund delta has at least two globally admissible events",
+            "each anonymous refund delta has at least two globally admissible "
+            "events, and both share a product category so the settlement note "
+            "cannot separate them",
+        )
+        return _BuiltCase(events, details, summaries, bank, allocations, key)
+
+    def _described_refund_case(self, case_id: str, n_events: int) -> _BuiltCase:
+        """Two identical anonymous refunds that only the settlement note separates.
+
+        Structurally this is AMBIGUOUS_REFUND: two parent payments, two refunds
+        of the same amount, two settlements, one anonymous refund line in each.
+        Every gate in the corroboration pass behaves identically on both
+        candidates -- both unconsumed, both exact on amount, both inside the
+        window, both with settled parents, both signed correctly, both globally
+        feasible -- so gate 9 finds a second survivor and the deterministic
+        ladder abstains. That abstention is scored as a miss here, and it is
+        supposed to be.
+
+        The one difference from AMBIGUOUS is that the two parents come from
+        DIFFERENT catalogue categories, and each settlement line carries an
+        operations note written in the vocabulary of its own category. The note
+        shares no token with any product string, so lexical similarity ranks the
+        right candidate exactly level with the wrong one. Reading the note and
+        knowing that a Hawkins pressure cooker is kitchenware resolves it.
+
+        Both cases are built inside a single case rather than paired across two,
+        because the category assignment has to be jointly constrained and doing
+        that across independent cases would need shared mutable state.
+        """
+        self._described_seq += 1
+        recovery_amount = DESCRIBED_AMOUNT_BASE_PAISE + self._described_seq
+        created_at = self._draw_created_at()
+        left, right = self.rng.sample(CATEGORIES, 2)
+
+        parents: list[GatewayEvent] = []
+        refunds: list[GatewayEvent] = []
+        for offset, category in enumerate((left, right)):
+            parent = self._payment(
+                created_at=created_at + timedelta(minutes=offset),
+                # Comfortably above the refund so the settlement still nets to a
+                # positive credit; upi so the fee is zero and the margin is the
+                # whole story.
+                amount_paise=max(self._draw_amount_paise(), recovery_amount + 100_000),
+                method="upi",
+                category=category,
+            )
+            parents.append(parent)
+            refunds.append(
+                self._refund(
+                    parent,
+                    amount_paise=recovery_amount,
+                    created_at=created_at + timedelta(hours=1, minutes=offset),
+                )
+            )
+
+        extras = [self._payment(created_at=created_at) for _ in range(n_events - 4)]
+        events = [*parents, *refunds, *extras]
+        details: list[SettlementDetail] = []
+        summaries: list[SettlementSummary] = []
+        bank: list[BankStatementRow] = []
+        allocations: list[AnswerKeyAllocation] = []
+
+        for index, (parent, refund) in enumerate(zip(parents, refunds)):
+            settlement_events = [parent, refund]
+            if index == 0:
+                settlement_events[1:1] = extras
+            built = self._settlement(
+                settlement_events,
+                self._settled_at(created_at),
+                anonymous_event_ids={refund.event_id},
+            )
+            details.extend(built[0])
+            summaries.append(built[1])
+            bank.extend(built[2])
+            # Unlike AMBIGUOUS, the refund events ARE allocated. The correct
+            # attribution is knowable, so resolving it scores as a true positive
+            # and abstaining scores as a miss. That asymmetry is the whole point
+            # of the pair of classes: an agent that always resolves scores zero
+            # on AMBIGUOUS, one that always declines scores zero here, and only
+            # one that actually reads the note scores on both.
+            allocations.extend(
+                self._allocations(
+                    [event.event_id for event in settlement_events],
+                    built[1],
+                    built[2],
+                )
+            )
+
+        key = self._key(
+            case_id,
+            Scenario.DESCRIBED_REFUND,
+            events,
+            summaries,
+            bank,
+            "two indistinguishable refund deltas separated only by the product "
+            "category named in each settlement note",
         )
         return _BuiltCase(events, details, summaries, bank, allocations, key)
 
@@ -951,6 +1119,8 @@ class Generator:
             return self._contested_refund_case(case_id, item.n_events)
         if item.scenario is Scenario.AMBIGUOUS_REFUND:
             return self._ambiguous_refund_case(case_id, item)
+        if item.scenario is Scenario.DESCRIBED_REFUND:
+            return self._described_refund_case(case_id, item.n_events)
         if item.scenario in {Scenario.CAPTURED_UNSETTLED, Scenario.NOT_SETTLEABLE}:
             return self._unsettled_case(case_id, item.scenario, item.n_events)
         raise ValueError(f"unhandled scenario {item.scenario}")
@@ -975,13 +1145,36 @@ class Generator:
         allocated_event_ids = {allocation.event_id for allocation in allocations}
         contested_amounts: set[int] = set()
         ambiguous_amounts: set[int] = set()
+        described_amounts: set[int] = set()
         contested_ids: set[str] = set()
         ambiguous_ids: set[str] = set()
+        described_ids: set[str] = set()
+
+        note_category = {
+            note: category
+            for category, notes in REFUND_NOTES.items()
+            for note in notes
+        }
+
+        def parent_category(event: GatewayEvent) -> str | None:
+            """The catalogue category of the payment that opened this refund.
+
+            Read back off the emitted description rather than off the
+            generator's own bookkeeping, so the assertion proves a property of
+            the data an agent will actually receive. Checking ``_txn_category``
+            instead would prove only that the generator agrees with itself.
+            """
+            for payment in payments_by_txn.get(event.txn_id, []):
+                category = category_of(payment.description)
+                if category is not None:
+                    return category
+            return None
 
         for case in cases:
             if case.scenario not in {
                 Scenario.CONTESTED_REFUND,
                 Scenario.AMBIGUOUS_REFUND,
+                Scenario.DESCRIBED_REFUND,
             }:
                 continue
             anonymous = [
@@ -993,6 +1186,9 @@ class Generator:
             if case.scenario is Scenario.CONTESTED_REFUND:
                 assert len(anonymous) == 1
                 contested_ids.add(case.case_id)
+            elif case.scenario is Scenario.DESCRIBED_REFUND:
+                assert len(anonymous) == 2
+                described_ids.add(case.case_id)
             else:
                 assert anonymous
                 ambiguous_ids.add(case.case_id)
@@ -1045,12 +1241,59 @@ class Generator:
                         for allocation in allocations
                         if allocation.settlement_id == detail.settlement_id
                     }
+                elif case.scenario is Scenario.DESCRIBED_REFUND:
+                    described_amounts.add(amount)
+                    # Arithmetic and the gates leave the tie standing -- if they
+                    # did not, this class would be closed by the deterministic
+                    # ladder and would measure nothing about reading.
+                    assert len(survivors) >= 2
+                    # ...and the note resolves it, uniquely. Exactly one
+                    # surviving candidate traces back to a payment in the
+                    # category the note is written about. Without this the class
+                    # would be unfair rather than hard: an agent could read
+                    # perfectly and still have no defensible answer.
+                    wanted = note_category.get(detail.reference_text or "")
+                    assert wanted is not None, (
+                        f"described line {detail.detail_id} carries no category note"
+                    )
+                    named = [
+                        event for event in survivors
+                        if parent_category(event) == wanted
+                    ]
+                    assert len(named) == 1, (
+                        f"described line {detail.detail_id} note names "
+                        f"{len(named)} of {len(survivors)} surviving candidates"
+                    )
+                    assert named[0].event_id in allocated_event_ids
+                    assert any(
+                        allocation.event_id == named[0].event_id
+                        and allocation.settlement_id == detail.settlement_id
+                        for allocation in allocations
+                    )
                 else:
                     ambiguous_amounts.add(amount)
                     assert len(survivors) >= 2
+                    # The mirror image of the assertion above, and the reason
+                    # this class survived the arrival of the note column: every
+                    # surviving candidate sits in the SAME category the note is
+                    # written about, so reading it perfectly still separates
+                    # nothing. An agent is expected to decline here, and it has
+                    # to be genuinely undecidable for that to be the right call.
+                    wanted = note_category.get(detail.reference_text or "")
+                    assert wanted is not None
+                    assert all(
+                        parent_category(event) == wanted for event in survivors
+                    ), (
+                        f"ambiguous line {detail.detail_id} note separates its "
+                        f"candidates by category, which makes it resolvable"
+                    )
 
         assert contested_ids.isdisjoint(ambiguous_ids)
+        assert contested_ids.isdisjoint(described_ids)
+        assert ambiguous_ids.isdisjoint(described_ids)
         assert contested_amounts.isdisjoint(ambiguous_amounts)
+        assert contested_amounts.isdisjoint(described_amounts)
+        assert ambiguous_amounts.isdisjoint(described_amounts)
 
     # ---------- public orchestration ----------
 

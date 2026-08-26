@@ -8,14 +8,14 @@
   },
   "family": "stress",
   "generated_at": "2026-06-01T00:00:00",
-  "n_allocations": 452,
-  "n_bank_rows": 112,
+  "n_allocations": 454,
+  "n_bank_rows": 122,
   "n_cases": 100,
   "n_gateway_events": 500,
   "n_gateway_rows": 500,
   "n_records_requested": 500,
   "n_settlement_detail_rows": 454,
-  "n_settlements": 114,
+  "n_settlements": 124,
   "scenario_case_counts": {
     "AMBIGUOUS_REFUND": 6,
     "BANK_CREDIT_DUPLICATE": 5,
@@ -23,11 +23,12 @@
     "CAPTURED_UNSETTLED": 7,
     "CONTESTED_REFUND": 14,
     "CORROBORATED_REFUND": 10,
+    "DESCRIBED_REFUND": 10,
     "DUPLICATE_DETAIL_EXPORT": 10,
     "FEE_TAX_VARIANCE": 8,
     "NOT_SETTLEABLE": 3,
     "REFUND_LATER_CYCLE": 10,
-    "STRAIGHT_THROUGH": 20
+    "STRAIGHT_THROUGH": 10
   },
   "seed": 101
 }

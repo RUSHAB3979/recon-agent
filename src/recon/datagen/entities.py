@@ -75,6 +75,12 @@ class GatewayEvent:
     status: str
     created_at: datetime
     method: str
+    # The merchant catalogue string for what was bought. Present on every
+    # payment, absent on every refund: a refund record references its payment,
+    # not the catalogue, so recovering the description costs a lineage hop. A
+    # field populated only where it is load-bearing would identify the hard
+    # cases by its own presence, which is why every payment carries one.
+    description: str = ""
 
     def to_row(self) -> dict[str, str]:
         return {
@@ -87,6 +93,7 @@ class GatewayEvent:
             "status": self.status,
             "created_at": _timestamp(self.created_at),
             "method": self.method,
+            "description": self.description,
         }
 
 

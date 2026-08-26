@@ -19,7 +19,7 @@ BATCH_CONFIG_FIELDS = [
 PRICING_RULE_FIELDS = ["method", "fee_rate_bps", "gst_rate_bps"]
 GATEWAY_FIELDS = [
     "event_id", "event_type", "txn_id", "order_id", "amount_paise",
-    "currency", "status", "created_at", "method",
+    "currency", "status", "created_at", "method", "description",
 ]
 DETAIL_FIELDS = [
     "detail_id", "settlement_id", "event_id", "line_type", "gross_effect_paise",
