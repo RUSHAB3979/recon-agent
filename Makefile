@@ -1,6 +1,11 @@
-.PHONY: help install data data-large test baseline ambiguity stats verify clean
+.PHONY: help install data data-large test baseline agent report ambiguity stats verify clean
 
-PYTHON  ?= python3
+# Prefer the project venv when one exists. The bare `python3` on PATH is not
+# the interpreter this project's dependencies are installed into on every
+# machine, and a `make verify` that cannot run is worse than no target at all --
+# it reports a broken toolchain as a broken project.
+VENV_PYTHON := $(wildcard .venv/Scripts/python.exe) $(wildcard .venv/bin/python)
+PYTHON  ?= $(if $(VENV_PYTHON),$(firstword $(VENV_PYTHON)),python3)
 export PYTHONPATH := src
 
 RECORDS      ?= 500
@@ -20,9 +25,11 @@ help:
 	@echo "make test       run the answer-key self-validation suite"
 	@echo "make data-large generate a 2000-record set for stable per-class metrics"
 	@echo "make baseline   run B1 and report the benchmark difficulty floor D"
+	@echo "make agent      run the reconciliation agent and print its per-pass yield"
+	@echo "make report     score the agent against B1 and B2 through the shared scorer"
 	@echo "make ambiguity  report candidate ambiguity before and after the gates"
 	@echo "make stats      regenerate the README dataset table from data/"
-	@echo "make verify     test + ambiguity + stats (run before trusting any metric)"
+	@echo "make verify     test + baseline + report + ambiguity + stats (run before trusting any metric)"
 	@echo "make clean      remove generated data"
 
 install:
@@ -47,17 +54,29 @@ test:
 baseline:
 	@$(PYTHON) -m recon.metrics.baselines data/dev data/primary data/stress
 
+# The agent itself. Prints what each rung of the ladder actually contributed,
+# so a rung that resolves nothing on real data is visible as a rung to delete.
+agent:
+	@$(PYTHON) -m recon.match.controller data/dev data/primary data/stress
+
+# One scorer, two consumers: the agent and the published floor are measured by
+# the same instrument, so the gap between them is attributable to capability.
+report:
+	@$(PYTHON) -m recon.metrics.report data/dev data/primary data/stress
+
 ambiguity:
 	@$(PYTHON) tools/ambiguity.py data/dev
 	@echo ""
-	@$(PYTHON) tools/ambiguity.py data/holdout
+	@$(PYTHON) tools/ambiguity.py data/primary
+	@echo ""
+	@$(PYTHON) tools/ambiguity.py data/stress
 
 stats:
 	@$(PYTHON) tools/refresh_stats.py
 
-verify: test ambiguity stats
+verify: test baseline report ambiguity stats
 
 clean:
-	@rm -rf data/dev data/holdout
+	@rm -rf data/dev data/primary data/stress data/large
 	@find . -name __pycache__ -type d -exec rm -rf {} + 2>/dev/null || true
 	@echo "cleaned"
