@@ -30,6 +30,24 @@ B2 IS B1 PLUS EXACTLY ONE RULE
     sceptic actually asks: how much is left once you add the one line of SQL
     that the restriction was hiding.  Quote match rates against B2, not B1.
 
+B3 IS B2 PLUS THE OBVIOUS STRING TRICK
+    Once settlement lines carry an operations note and payments carry a product
+    description, the first thing a sceptic will say is: you did not need a
+    language model, you needed fuzzy string matching.  B3 is that objection,
+    shipped as code.  It is B2 with its arbitrary tie-break replaced by the
+    strongest cheap lexical ranking available -- content-token Jaccard OR
+    character-level sequence ratio, whichever is higher, over the note against
+    each candidate's parent product description.
+
+    B3 is published because it is expected to FAIL, and a claim that string
+    matching cannot close a class is worth nothing until the string matcher has
+    been run and its number printed.  It fails for a structural reason rather
+    than a tuning one: the two vocabularies share no content token by
+    construction (``recon.datagen.catalogue`` proves this at import), so the
+    Jaccard term is identically zero and the character ratio is measuring
+    incidental letter runs.  B3 therefore ranks candidates on noise.  The
+    printed gap between B3 and the agent is the size of the reading problem.
+
 WHAT B1 IS NOT ALLOWED TO DO
     - read the narration
     - attempt refund-delta recovery: if a detail line carries no event_id, B1
@@ -58,10 +76,12 @@ from __future__ import annotations
 
 import argparse
 import csv
+import difflib
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from recon.datagen.catalogue import tokens
 from recon.metrics.score import AgentOutput, AnswerKey, CaseDecision, ScoreReport
 from recon.metrics.score import score as shared_score
 from typing import Callable, Optional, TypedDict
@@ -475,6 +495,180 @@ def run_b2(batch: Batch) -> list[Verdict]:
     return verdicts
 
 
+def _parent_description(batch: Batch, event_id: str) -> str:
+    """The product description of the payment that opened this refund's txn.
+
+    A refund row carries no description of its own, so any lexical approach has
+    to make this lineage hop first.  B3 is given the hop for free -- the point
+    is to test string similarity, not to handicap it on plumbing.
+    """
+    event = batch.events.get(event_id)
+    if event is None:
+        return ""
+    txn_id = event["txn_id"]
+    for candidate in batch.events.values():
+        if candidate["txn_id"] == txn_id and candidate["event_type"] == "PAYMENT":
+            return candidate.get("description", "")
+    return ""
+
+
+def lexical_similarity(note: str, description: str) -> float:
+    """The strongest cheap string score, so B3 fails on its merits.
+
+    Two measures, and the better of them is used.  Content-token Jaccard is the
+    principled one and shares its tokeniser with the generator invariant, so it
+    cannot be quietly weaker than the property it is meant to falsify.  The
+    character sequence ratio is added because a sceptic would rightly object
+    that zero token overlap does not mean zero string similarity -- and it is
+    the higher of the two here, which is exactly the finding worth publishing:
+    what remains after the tokens are gone is letter noise.
+    """
+    if not note or not description:
+        return 0.0
+    left, right = tokens(note), tokens(description)
+    union = left | right
+    jaccard = len(left & right) / len(union) if union else 0.0
+    ratio = difflib.SequenceMatcher(None, note.lower(), description.lower()).ratio()
+    return max(jaccard, ratio)
+
+
+def run_b3(batch: Batch) -> list[Verdict]:
+    """B3 -- B2 with a lexical tie-break instead of an arbitrary one.
+
+    Everything else is identical to B2, deliberately: if B3 differed in two
+    ways, the difference in its score could not be attributed to the string
+    matching.  The only change is which candidate is committed to when several
+    reproduce the delta exactly.
+    """
+    index = {amount: list(ids) for amount, ids in _unconsumed_refunds(batch).items()}
+    consumed: set[str] = set()
+    claimed: dict[str, list[tuple[str, str]]] = defaultdict(list)
+
+    def recover(line: dict[str, str]) -> bool:
+        if line["line_type"] != "REFUND":
+            return False
+        delta = -int(line["gross_effect_paise"])
+        available = [e for e in index.get(delta, []) if e not in consumed]
+        if not available:
+            return False
+        note = line.get("reference_text", "")
+        # Rank, then commit.  Ties broken by event_id so the run is reproducible
+        # -- and on this data almost every comparison IS a tie in substance, the
+        # scores separated only by incidental character overlap.
+        best = max(
+            available,
+            key=lambda e: (lexical_similarity(note, _parent_description(batch, e)), e),
+        )
+        consumed.add(best)
+        claimed[line["settlement_id"]].append((line["settlement_id"], best))
+        return True
+
+    verdicts = []
+    for case in batch.cases:
+        verdict = b1_case(batch, case, recover)
+        verdict.claims.extend(_joined_allocations(batch, case))
+        for sid in _split(case["settlement_ids"]):
+            verdict.claims.extend(claimed.get(sid, []))
+        verdicts.append(verdict)
+    return verdicts
+
+
+def lexical_hit_rate(batch: Batch) -> dict[str, float]:
+    """Does lexical ranking pick the right candidate more often than a coin?
+
+    This is the measurement the claim actually rests on, and it is more direct
+    than comparing B3's case accuracy against B2's.  Case accuracy moves for
+    reasons that have nothing to do with ranking -- a different tie-break
+    consumes a different event and shifts what a later line can claim -- so a
+    four-case swing there is noise wearing the costume of a finding.
+
+    Here the unit is the decision itself: for every anonymous refund line with
+    more than one exact-amount candidate, does the highest-scoring candidate
+    happen to be the one the answer key names?  Chance is the sum of 1/k over
+    those lines, because a line with k candidates is a k-sided coin.  If the
+    hit count sits on chance, string similarity is not ranking -- it is
+    guessing, and it does not matter how good the string matcher is.
+    """
+    index = _unconsumed_refunds(batch)
+    hits = 0
+    expected = 0.0
+    lines = 0
+    for lines_in_settlement in batch.detail_by_settlement.values():
+        for line in lines_in_settlement:
+            if line["line_type"] != "REFUND" or line["event_id"]:
+                continue
+            candidates = index.get(-int(line["gross_effect_paise"]), [])
+            if len(candidates) < 2:
+                continue
+            correct = {
+                e for e in candidates
+                if (line["settlement_id"], e) in batch.allocations
+            }
+            if not correct:
+                # The answer key deliberately leaves AMBIGUOUS refunds
+                # unallocated: there is no right answer to hit, so the line
+                # cannot contribute to a hit rate either way.
+                continue
+            lines += 1
+            expected += len(correct) / len(candidates)
+            note = line.get("reference_text", "")
+            best = max(
+                candidates,
+                key=lambda e: (lexical_similarity(note, _parent_description(batch, e)), e),
+            )
+            if best in correct:
+                hits += 1
+    return {
+        "decidable_lines": lines,
+        "hits": hits,
+        "expected_by_chance": expected,
+        "lift": (hits - expected) / lines if lines else 0.0,
+    }
+
+
+def lexical_separation(batch: Batch) -> dict[str, float]:
+    """How much signal a lexical matcher actually has on contested deltas.
+
+    Reported next to B3's score because the score alone invites the reply "your
+    string matcher was bad".  This measures the input rather than the algorithm:
+    for every anonymous refund line with more than one exact-amount candidate,
+    the margin between the best-scoring candidate and the runner-up.  A margin
+    near zero means no lexical matcher of any quality could have ranked them,
+    which is a stronger statement than any single baseline's accuracy.
+    """
+    index = _unconsumed_refunds(batch)
+    margins: list[float] = []
+    token_overlaps: list[int] = []
+    for lines in batch.detail_by_settlement.values():
+        for line in lines:
+            if line["line_type"] != "REFUND" or line["event_id"]:
+                continue
+            candidates = index.get(-int(line["gross_effect_paise"]), [])
+            if len(candidates) < 2:
+                continue
+            note = line.get("reference_text", "")
+            scores = sorted(
+                (
+                    lexical_similarity(note, _parent_description(batch, e))
+                    for e in candidates
+                ),
+                reverse=True,
+            )
+            margins.append(scores[0] - scores[1])
+            for e in candidates:
+                token_overlaps.append(
+                    len(tokens(note) & tokens(_parent_description(batch, e)))
+                )
+    if not margins:
+        return {"contested_lines": 0, "mean_margin": 0.0, "max_token_overlap": 0}
+    return {
+        "contested_lines": len(margins),
+        "mean_margin": sum(margins) / len(margins),
+        "max_margin": max(margins),
+        "max_token_overlap": max(token_overlaps) if token_overlaps else 0,
+    }
+
+
 def score(batch: Batch, verdicts: list[Verdict]) -> ScoreResult:
     """Score B1 against the answer key and derive the difficulty floor D."""
     by_id = {v.case_id: v for v in verdicts}
@@ -563,6 +757,8 @@ def _report(data_dir: Path, verbose: bool) -> None:
     verdicts = run_b1(batch)
     result = score(batch, verdicts)
     b2 = score(batch, run_b2(batch))
+    b3 = score(batch, run_b3(batch))
+    separation = lexical_separation(batch)
     by_id = {v.case_id: v for v in verdicts}
 
     print(f"\n{data_dir}  (published baselines)")
@@ -572,14 +768,30 @@ def _report(data_dir: Path, verbose: bool) -> None:
     print(f"  B2 + amount lookup   {b2['b1_correct']:>6}  "
           f"({b2['b1_accuracy']:.1%})   D = {b2['difficulty_floor_D']:.1%}"
           f"   <- quote against this one")
+    print(f"  B3 + string matching {b3['b1_correct']:>6}  "
+          f"({b3['b1_accuracy']:.1%})   D = {b3['difficulty_floor_D']:.1%}")
+    if separation["contested_lines"]:
+        print(f"    on {separation['contested_lines']} multi-candidate refund lines, "
+              f"lexical margin between best and runner-up: "
+              f"mean {separation['mean_margin']:.3f}, max {separation['max_margin']:.3f}; "
+              f"max content-token overlap {separation['max_token_overlap']}")
+    hit = lexical_hit_rate(batch)
+    if hit["decidable_lines"]:
+        print(f"    of {int(hit['decidable_lines'])} of those with a knowable answer, "
+              f"lexical ranking picked it {int(hit['hits'])} times against "
+              f"{hit['expected_by_chance']:.1f} expected by chance "
+              f"(lift {hit['lift']:+.3f})")
     per_scenario = result["per_scenario"]
     b2_scenario = b2["per_scenario"]
+    b3_scenario = b3["per_scenario"]
     print("\n  per scenario (correct / total):")
-    print(f"    {'scenario':<26} {'B1':>7}  {'B2':>7}")
+    print(f"    {'scenario':<26} {'B1':>7}  {'B2':>7}  {'B3':>7}")
     for scenario, (ok, n) in per_scenario.items():
         b2_ok = b2_scenario[scenario][0]
-        flag = "" if b2_ok == n else "   <- survives B2"
-        print(f"    {scenario:<26} {ok:>3}/{n:<3}  {b2_ok:>3}/{n:<3}{flag}")
+        b3_ok = b3_scenario[scenario][0]
+        flag = "" if b3_ok == n else "   <- survives every baseline"
+        print(f"    {scenario:<26} {ok:>3}/{n:<3}  {b2_ok:>3}/{n:<3}  "
+              f"{b3_ok:>3}/{n:<3}{flag}")
 
     if verbose:
         print("\n  cases B1 gets wrong:")

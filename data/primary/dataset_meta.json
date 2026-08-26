@@ -2,30 +2,33 @@
   "batch_id": "batch_primary_20260905",
   "expected_outcome_case_counts": {
     "ABSTAIN": 4,
-    "EXCEPTION": 10,
+    "EXCEPTION": 15,
     "NO_ACTION": 6,
-    "RECONCILED": 80
+    "RECONCILED": 75
   },
   "family": "primary",
   "generated_at": "2026-06-01T00:00:00",
-  "n_allocations": 422,
-  "n_bank_rows": 106,
+  "n_allocations": 442,
+  "n_bank_rows": 111,
   "n_cases": 100,
   "n_gateway_events": 500,
   "n_gateway_rows": 500,
   "n_records_requested": 500,
-  "n_settlement_detail_rows": 442,
-  "n_settlements": 106,
+  "n_settlement_detail_rows": 451,
+  "n_settlements": 112,
   "scenario_case_counts": {
     "AMBIGUOUS_REFUND": 4,
+    "BANK_CREDIT_DUPLICATE": 2,
+    "BANK_CREDIT_MISSING": 3,
     "CAPTURED_UNSETTLED": 6,
     "CONTESTED_REFUND": 8,
     "CORROBORATED_REFUND": 6,
+    "DESCRIBED_REFUND": 6,
     "DUPLICATE_DETAIL_EXPORT": 8,
     "FEE_TAX_VARIANCE": 4,
     "NOT_SETTLEABLE": 6,
     "REFUND_LATER_CYCLE": 10,
-    "STRAIGHT_THROUGH": 48
+    "STRAIGHT_THROUGH": 37
   },
   "seed": 20260905
 }

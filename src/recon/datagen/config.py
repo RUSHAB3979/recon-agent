@@ -22,7 +22,7 @@ class Family(str, Enum):
 
 
 class Scenario(str, Enum):
-    """The eleven mutually exclusive reconciliation cases in the benchmark."""
+    """The twelve mutually exclusive reconciliation cases in the benchmark."""
 
     STRAIGHT_THROUGH = "STRAIGHT_THROUGH"
     REFUND_LATER_CYCLE = "REFUND_LATER_CYCLE"
@@ -35,6 +35,7 @@ class Scenario(str, Enum):
     BANK_CREDIT_MISSING = "BANK_CREDIT_MISSING"
     BANK_CREDIT_DUPLICATE = "BANK_CREDIT_DUPLICATE"
     AMBIGUOUS_REFUND = "AMBIGUOUS_REFUND"
+    DESCRIBED_REFUND = "DESCRIBED_REFUND"
 
 
 class Resolution(str, Enum):
@@ -48,8 +49,21 @@ class Resolution(str, Enum):
 
 # Integer percentages are intentional: largest-remainder apportionment can
 # reproduce the published mix without a floating-point sampling path.
+#
+# PRIMARY is the headline family, so it has to contain every scenario class.
+# Nine of the eleven were present before; BANK_CREDIT_MISSING and
+# BANK_CREDIT_DUPLICATE were not, which meant an agent with no bank-side
+# handling whatsoever scored identically on the one number we intend to
+# publish.  A headline family that cannot distinguish those two agents is not
+# measuring the thing it claims to measure.
+#
+# The shares stay deliberately different from the other two families.  PRIMARY
+# is the realistic-prevalence mix rather than the enriched one, so its defect
+# rates are the lowest of the three, and matching DEVELOPMENT exactly would
+# refit the frozen thresholds to the prevalence they are later scored against.
 PRIMARY_CASE_SHARES: tuple[tuple[Scenario, int], ...] = (
-    (Scenario.STRAIGHT_THROUGH, 48),
+    (Scenario.STRAIGHT_THROUGH, 37),
+    (Scenario.DESCRIBED_REFUND, 6),
     (Scenario.REFUND_LATER_CYCLE, 10),
     (Scenario.CONTESTED_REFUND, 8),
     (Scenario.DUPLICATE_DETAIL_EXPORT, 8),
@@ -58,6 +72,8 @@ PRIMARY_CASE_SHARES: tuple[tuple[Scenario, int], ...] = (
     (Scenario.NOT_SETTLEABLE, 6),
     (Scenario.FEE_TAX_VARIANCE, 4),
     (Scenario.AMBIGUOUS_REFUND, 4),
+    (Scenario.BANK_CREDIT_MISSING, 3),
+    (Scenario.BANK_CREDIT_DUPLICATE, 2),
 )
 
 # The development family exists to freeze thresholds, and it is the only family
@@ -81,7 +97,8 @@ PRIMARY_CASE_SHARES: tuple[tuple[Scenario, int], ...] = (
 # later scored on, which is the overfitting this three-family split exists to
 # prevent.  Development prevalence is never reported.
 DEVELOPMENT_CASE_SHARES: tuple[tuple[Scenario, int], ...] = (
-    (Scenario.STRAIGHT_THROUGH, 26),
+    (Scenario.STRAIGHT_THROUGH, 16),
+    (Scenario.DESCRIBED_REFUND, 10),
     (Scenario.CONTESTED_REFUND, 14),
     (Scenario.CORROBORATED_REFUND, 10),
     (Scenario.REFUND_LATER_CYCLE, 9),
@@ -95,7 +112,8 @@ DEVELOPMENT_CASE_SHARES: tuple[tuple[Scenario, int], ...] = (
 )
 
 STRESS_CASE_SHARES: tuple[tuple[Scenario, int], ...] = (
-    (Scenario.STRAIGHT_THROUGH, 20),
+    (Scenario.STRAIGHT_THROUGH, 10),
+    (Scenario.DESCRIBED_REFUND, 10),
     (Scenario.CONTESTED_REFUND, 14),
     (Scenario.REFUND_LATER_CYCLE, 10),
     (Scenario.DUPLICATE_DETAIL_EXPORT, 10),
@@ -120,6 +138,10 @@ SCENARIO_OUTCOMES: dict[Scenario, Resolution] = {
     Scenario.BANK_CREDIT_MISSING: Resolution.EXCEPTION,
     Scenario.BANK_CREDIT_DUPLICATE: Resolution.EXCEPTION,
     Scenario.AMBIGUOUS_REFUND: Resolution.ABSTAIN,
+    # Resolvable, but only by reading the operations note against the
+    # merchant descriptor. The deterministic ladder abstains here and is
+    # scored wrong for it, which is the entire point of the class.
+    Scenario.DESCRIBED_REFUND: Resolution.RECONCILED,
 }
 
 PAYMENT_METHODS = ["upi", "card", "netbanking", "wallet", "emi"]

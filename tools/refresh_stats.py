@@ -28,7 +28,14 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 from ambiguity import measure  # noqa: E402
 
-from recon.metrics.baselines import Batch, run_b1, run_b2, score  # noqa: E402
+from recon.metrics.baselines import (  # noqa: E402
+    Batch,
+    lexical_hit_rate,
+    run_b1,
+    run_b2,
+    run_b3,
+    score,
+)
 
 START = "<!-- STATS:START -->"
 END = "<!-- STATS:END -->"
@@ -55,6 +62,8 @@ def _collect(data_dir: pathlib.Path) -> dict[str, Any]:
     batch = Batch.load(data_dir)
     baseline = score(batch, run_b1(batch))
     strengthened = score(batch, run_b2(batch))
+    lexical = score(batch, run_b3(batch))
+    hit = lexical_hit_rate(batch)
     return {
         "family": meta["family"],
         "events": meta["n_gateway_events"],
@@ -71,6 +80,10 @@ def _collect(data_dir: pathlib.Path) -> dict[str, Any]:
         "floor": baseline["difficulty_floor_D"],
         "b2_correct": strengthened["b1_correct"],
         "b2_floor": strengthened["difficulty_floor_D"],
+        "b3_correct": lexical["b1_correct"],
+        "lexical_hits": int(hit["hits"]),
+        "lexical_expected": hit["expected_by_chance"],
+        "lexical_lines": int(hit["decidable_lines"]),
         "false_attributions": strengthened["false_attributions"],
     }
 
@@ -106,6 +119,18 @@ def build_table() -> str:
 
     b2 = "".join(f" {c['b2_correct']} / {c['cases']} |" for c in cols)
     lines.append(f"| B2 — B1 + amount lookup |{b2}")
+
+    b3 = "".join(f" {c['b3_correct']} / {c['cases']} |" for c in cols)
+    lines.append(f"| B3 — B2 + fuzzy string matching |{b3}")
+
+    # The row that answers "you only needed string matching".  Hits against
+    # chance, not accuracy: B3's case count moves for tie-break knock-on
+    # reasons, the per-decision hit rate does not.
+    lexical = "".join(
+        f" {c['lexical_hits']} / {c['lexical_lines']} vs {c['lexical_expected']:.1f} |"
+        for c in cols
+    )
+    lines.append(f"| B3 lexical hits vs chance |{lexical}")
 
     wrong = "".join(f" {c['false_attributions']} |" for c in cols)
     lines.append(f"| B2 false attributions |{wrong}")
