@@ -47,12 +47,31 @@ WHY GATE 8 IS NOT DECORATION
     local can.
 
     It is implemented as the question a reconciler actually asks: is there a
-    globally consistent assignment that uses this pairing? Concretely, an edge
-    survives gate 8 when forbidding it drops the size of the maximum matching --
-    that is, when some maximum assignment of lines to events uses it. Forbid the
-    edge, re-solve, compare. The graphs here have tens of nodes, so the direct
-    formulation is used rather than an alternating-path argument that would be
-    faster and harder to defend in a room.
+    globally consistent assignment that uses this pairing? Concretely:
+
+        force the candidate edge (line, event)
+        remove both endpoints from the graph
+        re-solve the residual
+        the candidate survives iff the residual still reaches
+            ``baseline_matching_size - 1``
+
+    That is the test for whether committing to this pairing costs the rest of
+    the batch nothing -- equivalently, whether SOME maximum assignment of lines
+    to events uses it.
+
+    The neighbouring question is not the same question, and the difference is
+    worth stating because it is easy to conflate. Deleting the edge while
+    leaving both endpoints available and re-solving asks whether the pairing is
+    in EVERY maximum assignment. That is strictly stronger: it would eliminate
+    candidates that are perfectly admissible merely because an equally good
+    assignment exists without them, and it would leave gate 9 with nothing to
+    do. Gate 8 establishes that a pairing is POSSIBLE; gate 9 establishes that
+    it is the ONLY possibility. Keeping those two questions in two gates is what
+    keeps "could explain this line" separate from "is the only thing that could".
+
+    The graphs here have tens of nodes, so the direct formulation is used rather
+    than an alternating-path argument that would be faster and harder to defend
+    in a room.
 
     On the current datasets gate 8 eliminates nothing, and the per-gate table
     this module produces says so out loud. That is the honest reporting posture:
@@ -411,11 +430,18 @@ class RefundCorroborationPass:
     ) -> bool:
         """Gate 8: is there a globally consistent assignment using this pairing?
 
-        Forbid the line and the event, re-solve, and compare. If the rest of the
-        graph can still be matched to within one of the original size, then some
-        maximum assignment uses this pairing and it stays admissible. If not,
+        Force the edge. Remove both endpoints -- the line from the left side,
+        the event from the right side and from every other line's candidate
+        list -- and re-solve the residual graph. The candidate survives iff the
+        residual can still reach ``baseline - 1``: committing to this pairing
+        then costs the rest of the batch nothing, so some maximum assignment
+        uses it and it stays admissible. If the residual falls short,
         committing to it would strand another line, and a reconciliation that
         strands a line to resolve a different one has not reconciled anything.
+
+        This is deliberately not the forbid-the-edge question -- delete the edge,
+        keep both endpoints, re-solve -- which tests membership in EVERY maximum
+        assignment rather than in some, and would discard admissible candidates.
         """
         residual = {
             other_id: [

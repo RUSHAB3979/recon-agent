@@ -1,4 +1,4 @@
-.PHONY: help install data data-large test baseline agent report ambiguity stats verify clean
+.PHONY: help install data data-large test baseline agent adjudicate report ambiguity stats verify verify-audit clean
 
 # Prefer the project venv when one exists. The bare `python3` on PATH is not
 # the interpreter this project's dependencies are installed into on every
@@ -26,10 +26,12 @@ help:
 	@echo "make data-large generate a 2000-record set for stable per-class metrics"
 	@echo "make baseline   run B1 and report the benchmark difficulty floor D"
 	@echo "make agent      run the reconciliation agent and print its per-pass yield"
+	@echo "make adjudicate run the agent WITH the evidence-reading rung (opt-in, not a published number)"
 	@echo "make report     score the agent against B1 and B2 through the shared scorer"
 	@echo "make ambiguity  report candidate ambiguity before and after the gates"
 	@echo "make stats      regenerate the README dataset table from data/"
-	@echo "make verify     test + baseline + report + ambiguity + stats (run before trusting any metric)"
+	@echo "make verify-audit  re-verify the tamper-evident hash chain of every audit log"
+	@echo "make verify     test + baseline + report + ambiguity + audit chain + stats"
 	@echo "make clean      remove generated data"
 
 install:
@@ -59,6 +61,14 @@ baseline:
 agent:
 	@$(PYTHON) -m recon.match.controller data/dev data/primary data/stress
 
+# The evidence-reading rung, on the development family only. Deliberately not
+# part of `make report` or `make verify`: the published figures must not depend
+# on a network call, an API key, or a model's mood. With no ANTHROPIC_API_KEY in
+# the environment this selects the declining reader and reproduces the
+# deterministic result, which is what CI measures.
+adjudicate:
+	@$(PYTHON) -m recon.match.controller data/dev --adjudicate
+
 # One scorer, two consumers: the agent and the published floor are measured by
 # the same instrument, so the gap between them is attributable to capability.
 report:
@@ -74,7 +84,18 @@ ambiguity:
 stats:
 	@$(PYTHON) tools/refresh_stats.py
 
-verify: test baseline report ambiguity stats
+# An audit trail nothing re-checks is a log file. This recomputes every
+# record_hash from the record it claims to seal and fails on the first break.
+AUDIT_LOGS := $(wildcard data/*/audit.jsonl) $(wildcard data/audit.jsonl)
+
+verify-audit:
+ifeq ($(strip $(AUDIT_LOGS)),)
+	@echo "no audit logs on disk yet -- the chain itself is covered by tests/test_audit.py"
+else
+	@$(PYTHON) -m recon.match.audit $(AUDIT_LOGS)
+endif
+
+verify: test baseline report ambiguity verify-audit stats
 
 clean:
 	@rm -rf data/dev data/primary data/stress data/large

@@ -206,6 +206,14 @@ consistent with the line type; `txn_id` lineage intact; control equations still
 satisfied afterwards; no other case forced into infeasibility; and **no second
 candidate satisfies the first eight**.
 
+The infeasibility gate is the only global one, and it is decided by forcing the
+pairing rather than by ranking it: take the candidate edge, remove both of its
+endpoints, re-solve the residual assignment problem, and keep the candidate only
+if the residual still reaches the baseline matching size minus one. That asks
+whether *some* consistent global assignment uses this pairing. Whether it is the
+*only* one is gate 9's job, and splitting the two is what keeps "could explain
+this line" from being reported as "explains this line".
+
 That last gate is the one that matters. **Ties are never broken** — not by
 frequency, not by a prior, not by batch history, not by model plausibility.
 Where two candidates survive, the agent abstains.

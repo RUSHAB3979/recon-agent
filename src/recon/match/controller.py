@@ -48,6 +48,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Mapping, Sequence
 
+from recon.match.adjudicator import (
+    DEFAULT_MIN_CONFIDENCE,
+    AdjudicationPass,
+    default_reader,
+)
 from recon.match.caseload import CaseUnit, load_caseload
 from recon.match.controls import DUPLICATE_WARNING, Finding, settlement_findings
 from recon.match.normalize import Batch, load_batch
@@ -128,7 +133,21 @@ def run_ladder(batch: Batch, ladder: Sequence[Pass] = DEFAULT_LADDER) -> LadderR
     per_pass: list[PassResult] = []
 
     for rung in ladder:
-        result = rung.run(batch, frozenset(consumed))
+        # A rung that declares ``run_residual`` is asking to see what the rungs
+        # before it could not decide. It is handed those abstentions and nothing
+        # else, which is what makes "the model never sees a resolved case" a
+        # property of the runner rather than a promise made by the rung.
+        residual = getattr(rung, "run_residual", None)
+        if residual is None:
+            result = rung.run(batch, frozenset(consumed))
+        else:
+            outstanding = tuple(
+                abstention
+                for earlier in per_pass
+                for abstention in earlier.abstentions
+                if abstention.detail_id not in claimed_lines
+            )
+            result = residual(batch, frozenset(consumed), outstanding)
         surviving: list[Claim] = []
         for claim in result.claims:
             if claim.event_id in consumed:
@@ -160,6 +179,32 @@ def run_ladder(batch: Batch, ladder: Sequence[Pass] = DEFAULT_LADDER) -> LadderR
                 counters=result.counters,
             )
         )
+
+    # An abstention a later rung settled is no longer an abstention. Pruning
+    # here rather than in the rungs keeps the same invariant as consumption:
+    # the runner owns what survives, so no rung can leave a stale non-answer
+    # attached to a line that was later resolved -- or report one line twice,
+    # once by the rung that gave up and once by the rung that took it on.
+    # Walking backwards makes the LAST word on a line the one that is kept.
+    spoken_for = set(claimed_lines)
+    pruned: list[PassResult] = []
+    for result in reversed(per_pass):
+        kept = [
+            abstention
+            for abstention in result.abstentions
+            if abstention.detail_id not in spoken_for
+        ]
+        spoken_for.update(abstention.detail_id for abstention in kept)
+        pruned.append(
+            PassResult(
+                pass_name=result.pass_name,
+                claims=result.claims,
+                abstentions=kept,
+                examined=result.examined,
+                counters=result.counters,
+            )
+        )
+    per_pass = list(reversed(pruned))
 
     return LadderRun(
         per_pass=tuple(per_pass), accepted=tuple(accepted), rejected=tuple(rejected)
@@ -335,10 +380,33 @@ def main(argv: list[str] | None = None) -> int:
         description="Run the reconciliation agent over one or more released datasets."
     )
     parser.add_argument("data_dir", type=Path, nargs="*", default=[Path("data/dev")])
+    parser.add_argument(
+        "--adjudicate",
+        action="store_true",
+        help=(
+            "append the evidence-reading rung, which acts on the residual the "
+            "gates could not separate. Off by default: the published numbers "
+            "are the deterministic ones and must not depend on a network call."
+        ),
+    )
+    parser.add_argument(
+        "--min-confidence",
+        type=float,
+        default=DEFAULT_MIN_CONFIDENCE,
+        help="below this, a stated preference is recorded as a decline",
+    )
     args = parser.parse_args(argv)
 
     for directory in args.data_dir:
-        result = reconcile(directory)
+        # A fresh rung per dataset, so the token and cost figures printed under
+        # each batch are that batch's own and not a running total.
+        rung = (
+            AdjudicationPass(default_reader(), min_confidence=args.min_confidence)
+            if args.adjudicate
+            else None
+        )
+        ladder: Sequence[Pass] = DEFAULT_LADDER if rung is None else (*DEFAULT_LADDER, rung)
+        result = reconcile(directory, ladder)
         counts: dict[str, int] = {}
         for verdict in result.verdicts:
             counts[verdict.outcome] = counts.get(verdict.outcome, 0) + 1
@@ -353,6 +421,15 @@ def main(argv: list[str] | None = None) -> int:
             print(
                 f"    {pass_result.pass_name:<20} {pass_result.examined:>5} / "
                 f"{len(pass_result.claims):>5} / {len(pass_result.abstentions):>5}"
+            )
+        if rung is not None:
+            # Cost per batch is a reported metric, so it is printed by the
+            # command that incurs it rather than reconstructed afterwards.
+            print(
+                f"\n  adjudicator      {rung.usage.calls} calls, "
+                f"{rung.usage.input_tokens} in / {rung.usage.output_tokens} out "
+                f"({rung.usage.cache_read_tokens} cached), "
+                f"${rung.cost_usd()} on {rung.reader.model}"
             )
     return 0
 

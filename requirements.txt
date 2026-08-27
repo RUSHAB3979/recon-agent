@@ -1,1 +1,7 @@
 pytest>=8.0
+
+# The evidence-reading rung. Optional at runtime: with no ANTHROPIC_API_KEY
+# the ladder falls back to a reader that declines every residual line, which
+# reproduces the published deterministic numbers exactly. It is pinned here so
+# CI installs the same surface the adjudicator was written against.
+anthropic>=1.0.0,<2

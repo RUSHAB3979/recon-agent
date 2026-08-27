@@ -410,7 +410,11 @@ is ABSTAIN and resolving either is scored as a false match.
 5. Its `txn_id` lineage is consistent (a refund's parent payment exists and settled).
 6. Sign is consistent with `line_type`.
 7. Accepting it leaves every control equation satisfied.
-8. Accepting it does not force another case into infeasibility (global, not local).
+8. Committing to it leaves every other case solvable (global, not local). Operationally: force the candidate edge, remove both endpoints, re-solve the
+   residual graph, and require that it still reach the baseline matching size
+   minus one. This asks whether the pairing appears in *some* maximum
+   assignment, not in every one -- the stronger question would discard
+   admissible candidates and leave gate 9 nothing to establish.
 9. No second candidate satisfies gates 1–8.
 
 **A tie may never be broken by frequency, by prior, by batch history, or by the
