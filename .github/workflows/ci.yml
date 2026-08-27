@@ -53,6 +53,13 @@ jobs:
       - name: Recovery ambiguity
         run: make ambiguity
 
+      # The audit module being tested is not the same claim as the pipeline
+      # actually writing a log. This runs the agent with journalling on, so
+      # the verification below has real decisions to re-seal rather than an
+      # empty glob.
+      - name: Decision journals
+        run: make audit
+
       - name: Audit hash chain
         run: make verify-audit
 

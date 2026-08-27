@@ -859,22 +859,59 @@ def summarise(
     }
 
 
+def _expand(paths: Iterable[Path]) -> list[Path]:
+    """Resolve each argument to concrete log files.
+
+    A directory expands to every ``audit.jsonl`` beneath it. Expanding here
+    rather than in the Makefile is not a style preference: ``$(wildcard)`` is
+    evaluated when the Makefile is parsed, so a target that wrote journals and
+    then verified them in the same invocation would verify the empty set that
+    existed before the run started.
+    """
+
+    found: list[Path] = []
+    for path in paths:
+        if path.is_dir():
+            found.extend(sorted(path.rglob("audit.jsonl")))
+        elif path.exists():
+            found.append(path)
+        # A path that is neither contributes nothing. The caller reports every
+        # argument it searched when the total comes to zero, which says more
+        # than a per-path "no such file" would.
+    return found
+
+
 def main(argv: list[str] | None = None) -> int:
     """Verify the hash chain of one or more audit logs.
 
-    Exits non-zero on the first failure so it can gate a build. An audit trail
-    nothing checks is a log file, not an audit trail.
+    Exits non-zero on the first failure so it can gate a build, and non-zero
+    when there is nothing to verify at all -- a check that passes over an empty
+    set is not a check. An audit trail nothing re-reads is a log file.
     """
 
     parser = argparse.ArgumentParser(
         prog="python -m recon.match.audit",
         description="Verify the tamper-evident hash chain of an audit log.",
     )
-    parser.add_argument("path", type=Path, nargs="+", help="JSONL audit log(s)")
+    parser.add_argument(
+        "path",
+        type=Path,
+        nargs="+",
+        help="JSONL audit log(s), or directories to search for audit.jsonl",
+    )
     args = parser.parse_args(argv)
 
+    logs = _expand(args.path)
+    if not logs:
+        print(
+            "no audit logs found in "
+            + ", ".join(str(path) for path in args.path)
+            + " -- run 'make audit' to write them"
+        )
+        return 1
+
     status = 0
-    for path in args.path:
+    for path in logs:
         try:
             log = AuditLog.read(path)
         except (AuditError, OSError) as error:

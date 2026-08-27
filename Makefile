@@ -1,4 +1,4 @@
-.PHONY: help install data data-large test baseline agent adjudicate report ambiguity stats verify verify-audit clean
+.PHONY: help install data data-large test baseline agent adjudicate report ambiguity audit stats verify verify-audit clean
 
 # Prefer the project venv when one exists. The bare `python3` on PATH is not
 # the interpreter this project's dependencies are installed into on every
@@ -30,6 +30,7 @@ help:
 	@echo "make report     score the agent against B1 and B2 through the shared scorer"
 	@echo "make ambiguity  report candidate ambiguity before and after the gates"
 	@echo "make stats      regenerate the README dataset table from data/"
+	@echo "make audit      write a decision journal per family to runs/"
 	@echo "make verify-audit  re-verify the tamper-evident hash chain of every audit log"
 	@echo "make verify     test + baseline + report + ambiguity + audit chain + stats"
 	@echo "make clean      remove generated data"
@@ -81,23 +82,32 @@ ambiguity:
 	@echo ""
 	@$(PYTHON) tools/ambiguity.py data/stress
 
+# Every decision the agent took, sealed into a hash chain. Rule 5 of this
+# project is that every decision is logged and human-overridable; a module
+# that CAN log while the pipeline never DOES is not compliance, it is a
+# library. This target is what makes `make verify-audit` verify something.
+audit:
+	@$(PYTHON) -m recon.match.controller data/dev data/primary data/stress --audit-dir runs
+
 stats:
 	@$(PYTHON) tools/refresh_stats.py
 
 # An audit trail nothing re-checks is a log file. This recomputes every
 # record_hash from the record it claims to seal and fails on the first break.
-AUDIT_LOGS := $(wildcard data/*/audit.jsonl) $(wildcard data/audit.jsonl)
-
+# Journals live under runs/ rather than data/. A dataset directory is an
+# input and stays read-only; writing a run's output into it would make the
+# byte-for-byte regeneration check in CI compare a run against itself.
+#
+# The directory is passed through and expanded by the module, not by
+# $(wildcard): make expands wildcards when it parses the file, so `make
+# verify` would otherwise check the logs that existed BEFORE its own
+# `audit` prerequisite ran -- on a clean tree, none.
 verify-audit:
-ifeq ($(strip $(AUDIT_LOGS)),)
-	@echo "no audit logs on disk yet -- the chain itself is covered by tests/test_audit.py"
-else
-	@$(PYTHON) -m recon.match.audit $(AUDIT_LOGS)
-endif
+	@$(PYTHON) -m recon.match.audit runs
 
-verify: test baseline report ambiguity verify-audit stats
+verify: test baseline report ambiguity audit verify-audit stats
 
 clean:
-	@rm -rf data/dev data/primary data/stress data/large
+	@rm -rf data/dev data/primary data/stress data/large runs
 	@find . -name __pycache__ -type d -exec rm -rf {} + 2>/dev/null || true
 	@echo "cleaned"
