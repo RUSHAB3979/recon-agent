@@ -86,6 +86,7 @@ make data          # generate all three families (development, primary, stress)
 make agent         # run the pipeline, print per-pass yield and per-gate eliminations
 make report        # score the agent and both baselines through one scorer
 make verify        # tests + baselines + report + ambiguity + audit chain + stats
+make audit         # write runs/<family>/audit.jsonl -- every sealed decision
 ```
 
 The evidence-reading rung is opt-in and never contributes to a published
@@ -411,8 +412,40 @@ what confidence, and whether it is overridable. Two hashes do two jobs:
   inserting or reordering a record, because every downstream link then points at
   a hash that no longer exists.
 
-`make verify-audit` recomputes the whole chain. The final `head_hash` is a single
-value that attests to the entire log.
+### The pipeline writes one, and CI re-reads it
+
+A module that *can* seal decisions while the pipeline never emits any is a
+library, not an audit trail. `make audit` runs the agent over all three
+families with journalling on and writes `runs/<family>/audit.jsonl` --
+**1,587 sealed decisions** across the three, every attribution, every
+abstention with the shortlist it could not separate, and every case
+disposition. `make verify-audit` then recomputes the whole chain, and both
+steps run in CI.
+
+The log is **derived from the finished run**, not appended as a side effect
+by each rung. A rung that forgot to log would be undetectable, and the
+contents would depend on the order each pass happened to iterate its inputs.
+Deriving it makes *every decision is logged* one function with one test
+instead of a discipline six modules have to keep. The cost, stated before
+anyone finds it: a derived log can only record what the run retained --
+which is why `PassResult` keeps abstentions with their candidates and the
+runner keeps the claims it refused, with the reason for each.
+
+Journals live under `runs/`, never in `data/`. A dataset directory is an
+input and stays read-only; writing run output into it would make CI's
+byte-for-byte regeneration check compare a run against itself.
+
+Two runs over the same data seal to **different** head hashes, because the
+timestamp is part of the record. That is deliberate: a log that hashed the
+same whether it was written yesterday or today would be a checksum of the
+input, not a record of when a decision was taken.
+
+Attributions, abstentions and dispositions are all overridable. The one
+decision that is not is the runner refusing a claim because the event was
+already consumed -- reinstating that would allocate one event to two lines,
+which is the single invariant the runner exists to hold.
+
+The final `head_hash` is a single value that attests to the entire log.
 
 **What this does not do:** it does not stop someone who can rewrite the whole
 file, since they can recompute the chain. Detecting that needs the head hash held
@@ -432,6 +465,7 @@ src/recon/match/
   caseload.py           grouping rows into scoreable cases
   controller.py         the pipeline, per-pass yield, per-gate eliminations
   audit.py              hash-chained decision log + human override layer
+  journal.py            turns a finished run into that log
 src/recon/metrics/
   score.py              one scorer, used by both the agent and the baselines
   baselines.py          B1, B2, B3 and the lexical hit-rate measurement

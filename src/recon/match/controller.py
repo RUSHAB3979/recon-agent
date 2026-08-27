@@ -55,6 +55,7 @@ from recon.match.adjudicator import (
 )
 from recon.match.caseload import CaseUnit, load_caseload
 from recon.match.controls import DUPLICATE_WARNING, Finding, settlement_findings
+from recon.match.journal import write_journal
 from recon.match.normalize import Batch, load_batch
 from recon.match.passes import DEFAULT_LADDER, Claim, Pass, PassResult
 from recon.metrics.score import AgentOutput, CaseDecision
@@ -390,6 +391,17 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--audit-dir",
+        type=Path,
+        default=None,
+        help=(
+            "write each dataset's decision journal to DIR/<dataset>/audit.jsonl. "
+            "Kept outside data/ on purpose: a dataset directory is an input and "
+            "stays read-only, and mixing a run's output into it would make the "
+            "byte-for-byte regeneration check meaningless."
+        ),
+    )
+    parser.add_argument(
         "--min-confidence",
         type=float,
         default=DEFAULT_MIN_CONFIDENCE,
@@ -431,6 +443,13 @@ def main(argv: list[str] | None = None) -> int:
                 f"({rung.usage.cache_read_tokens} cached), "
                 f"${rung.cost_usd()} on {rung.reader.model}"
             )
+        if args.audit_dir is not None:
+            # Derived from the finished run rather than appended as each rung
+            # goes: see recon.match.journal for why, and for what that costs.
+            destination = args.audit_dir / directory.name / "audit.jsonl"
+            log = write_journal(result, destination)
+            print(f"  audit            {len(log)} decisions -> {destination}")
+            print(f"                   head {log.head_hash}")
     return 0
 
 

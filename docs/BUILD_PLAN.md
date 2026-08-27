@@ -352,9 +352,25 @@ honest limit — a chain establishes that a log was not edited *in place*; it
 cannot establish that the head is the head somebody wrote, which needs a trusted
 copy of the last hash.
 
-Still outstanding: the exception classifier, the abstention/coverage curve, the
-demo surface, and wiring the controller to actually write an audit log rather
-than only being able to. If a number disappoints it gets reported, not re-tuned.
+The controller now writes one too. `recon.match.journal` derives an
+`AuditLog` from a finished `RunResult` -- every attribution, abstention and
+case disposition -- and `make audit` emits `runs/<family>/audit.jsonl` for
+all three families (1,587 sealed records). It is derived rather than
+appended per rung so that coverage is a property of one tested function
+instead of a discipline every module has to keep; the cost is that it can
+only record what the run retained, which is why nothing is dropped between
+the decision and the record.
+
+One bug worth remembering: `verify-audit` originally globbed its file list
+with `$(wildcard)`, which make expands when it PARSES the file. `make
+verify` therefore checked the logs that existed before its own `audit`
+prerequisite ran -- on a clean tree, none -- and printed a reassuring
+message while verifying nothing. The expansion moved into the module, and
+the command now exits non-zero when there is nothing to verify, because a
+check that passes over the empty set is not a check.
+
+Still outstanding: the exception classifier, the abstention/coverage curve,
+and the demo surface. If a number disappoints it gets reported, not re-tuned.
 
 ---
 
