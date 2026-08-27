@@ -283,7 +283,7 @@ coverage curve across abstention thresholds.
 core, real numbers against a published floor, honest exception list, two
 baselines. What follows raises the score without being load-bearing.
 
-### Phase E — adjudicator (1–2 Sep)
+### Phase E — adjudicator (1–2 Sep) — **BUILT**
 
 `src/recon/match/adjudicator.py`. Fires only on `Suggested` and `Abstain`
 residuals — which, at 16 declined lines in primary, is a *tiny* call volume, and
@@ -297,10 +297,46 @@ group and false-matches the second. **Abstention has to survive contact with the
 model**, which is precisely the behaviour the two paired classes were built to
 measure.
 
-Tool-using, with no arithmetic of its own — it can ask `verify_sum` whether a
-sum holds but cannot compute one. That makes "no LLM arithmetic" structural
-rather than aspirational. Tiered routing: Haiku 4.5 for explanation writing,
-Opus 5 only for genuine ties where a wrong match costs money.
+**What was built, and how it differs from this plan.** The tool-using shape
+described above — an agent that may call `verify_sum` but never compute one —
+was dropped, and the reason is worth recording because it is a panel answer.
+Giving the model tools presumes there is something left for it to look up. By
+the time a line reaches this rung the gates have already verified the amount to
+the paise, the window, the currency, the lineage, the controls and global
+feasibility, for every surviving candidate. A `verify_sum` call could only
+return what the gates already proved. The tool surface would have been theatre:
+real code, real latency, real tokens, and no decision that depended on it.
+
+What is there instead is smaller and does exactly one thing the gates cannot:
+
+- `EvidenceReader` is a one-method protocol, and the reader is injected. Three
+  ship — `DecliningReader` (the default), `AnthropicReader`, `ScriptedReader`.
+- `AdjudicationPass.run_residual` is handed the abstention list by the runner,
+  so "it never sees a resolved case" is a property of the controller rather
+  than a promise made by the rung.
+- The model answers with a **letter from a closed shortlist**. A letter outside
+  it is discarded, not repaired.
+- **Amounts and dates are absent from the prompt.** Every candidate matched the
+  delta exactly, so they carry no discriminating information, and showing them
+  would invite a fabricated numeric justification for a decision made on other
+  grounds. That is what makes "no LLM arithmetic" structural here: there is no
+  arithmetic in the input.
+- Confidence below a declared floor is recorded as a decline, and declining is
+  always available.
+
+Tiered routing survives in the sense that the model is a constructor argument;
+the default is Haiku 4.5, because the task is a two-way reading comprehension
+question over one sentence and paying Opus rates for it would be a cost metric
+own-goal.
+
+The rung is **off by default** (`--adjudicate` turns it on) and contributes to
+no published number. With the declining reader the pipeline reproduces the
+deterministic figures exactly, and that equality is a test.
+
+Measured ceiling, using a reader that answers from the answer key — the bound on
+the plumbing, not a forecast of model accuracy: **100/100 on all three
+families**, reached while still abstaining on the four primary
+`AMBIGUOUS_REFUND` cases. The achievable band on primary is therefore 94 to 100.
 
 Abstention remains free and never penalised.
 
@@ -309,11 +345,16 @@ Abstention remains free and never penalised.
 Demo UI, README via `make stats` (never hand-edited), pitch video. Holdout runs
 **once**, at the start of this phase.
 
-Still outstanding and not to be forgotten: the audit log is appended per
-decision but is **not** yet tamper-evident — `record_hash = SHA256(previous_hash
-+ canonical_full_record)` plus a `verify-audit` target. Until that lands, the
-JSONL log must not be described as immutable. If a number disappoints it gets reported,
-not re-tuned.
+The tamper-evident audit chain has landed: `record_hash =
+SHA256(previous_hash + canonical_json(complete record))`, verified on read, with
+a `make verify-audit` target and a `python -m recon.match.audit` CLI. Note the
+honest limit — a chain establishes that a log was not edited *in place*; it
+cannot establish that the head is the head somebody wrote, which needs a trusted
+copy of the last hash.
+
+Still outstanding: the exception classifier, the abstention/coverage curve, the
+demo surface, and wiring the controller to actually write an audit log rather
+than only being able to. If a number disappoints it gets reported, not re-tuned.
 
 ---
 

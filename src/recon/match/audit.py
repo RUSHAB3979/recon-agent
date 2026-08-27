@@ -3,10 +3,47 @@
 The audit log is deliberately append-only.  Overrides are separate records and
 are applied only when an effective view is requested, leaving every automated
 decision available for inspection.
+
+TWO HASHES, TWO JOBS
+
+    ``decision_id`` is an IDENTITY. It hashes ``stage``, ``subject`` and
+    ``action`` only, which is exactly what makes it stable and useful: the same
+    stage reaching the same verdict about the same subject gets the same id
+    across runs, so it can be referenced by an override, deduplicated on append,
+    and cited in a report. Its narrowness is the feature.
+
+    ``record_hash`` is a SEAL. It covers the COMPLETE record -- inputs, rule,
+    result, confidence, reasoning, timestamp, overridable flag, every Decimal
+    path -- chained to the record before it:
+
+        record_hash = SHA256(previous_hash || canonical_json(complete record))
+
+    with the first record chained to ``GENESIS_HASH``.
+
+    Keeping the two separate is deliberate, and conflating them would break
+    both. An identity that changed whenever the reasoning text changed could not
+    be referenced. A seal that covered only stage, subject and action would let
+    anyone rewrite the amount, the rule that fired, or the confidence, and leave
+    the log validating perfectly -- which is precisely the tampering an audit
+    trail exists to detect.
+
+    Because each seal includes its predecessor, the chain also detects edits
+    that leave individual records intact: deleting a record, inserting one, or
+    reordering two all break every link downstream. The final ``head_hash`` is a
+    single value that attests to the whole log, so it can be published,
+    timestamped, or countersigned without shipping the log itself.
+
+    What this does NOT provide is protection against an attacker who can rewrite
+    the entire file, since they can simply recompute the chain. Defeating that
+    needs the head hash held somewhere the writer cannot reach -- an append-only
+    store, a signature, or a third party. The chain makes tampering DETECTABLE
+    given a trusted head, not IMPOSSIBLE, and that distinction is stated here
+    rather than left for a reviewer to point out.
 """
 
 from __future__ import annotations
 
+import argparse
 from collections import Counter
 from collections.abc import Iterable, Iterator, Mapping, Sequence, Set as AbstractSet
 from dataclasses import dataclass, field
@@ -42,6 +79,15 @@ class DuplicateDecisionError(AuditError, ValueError):
 
 class AuditIntegrityError(AuditError, ValueError):
     """Raised when serialized audit data is malformed or has been altered."""
+
+
+class AuditChainError(AuditIntegrityError):
+    """A record does not reproduce the hash that claims to seal it.
+
+    Distinct from a plain integrity error because the remedy differs: a
+    malformed record is a bug in whatever wrote it, a broken chain link is
+    evidence that the file changed after it was written.
+    """
 
 
 class NonOverridableDecisionError(AuditError, ValueError):
@@ -167,6 +213,71 @@ def _decision_id(stage: str, subject: object, action: str) -> str:
     return f"dec_{digest[:24]}"
 
 
+GENESIS_HASH = "0" * 64
+
+# Fields that carry the chain itself. They are excluded from the sealed payload
+# -- a hash cannot cover its own value -- and are not part of a Decision.
+_CHAIN_FIELDS = frozenset({"previous_hash", "record_hash"})
+
+
+def _dumps(record: Mapping[str, object]) -> str:
+    """The one serialisation used for both writing and sealing.
+
+    Writing and hashing must agree byte for byte or the chain would fail to
+    verify a file it had just written, so they share this function rather than
+    each spelling out the same four keyword arguments.
+    """
+
+    return json.dumps(
+        record,
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+def _record_hash(previous_hash: str, record: Mapping[str, object]) -> str:
+    """Seal a complete record against its predecessor."""
+
+    sealed = {
+        key: value for key, value in record.items() if key not in _CHAIN_FIELDS
+    }
+    return hashlib.sha256(
+        (previous_hash + _dumps(sealed)).encode("utf-8")
+    ).hexdigest()
+
+
+def _verify_chain_link(
+    record: Mapping[str, object], previous_hash: str, line_number: int
+) -> str:
+    """Check one link and return the hash the next record must chain to."""
+
+    for name in ("previous_hash", "record_hash"):
+        value = record.get(name)
+        if not isinstance(value, str) or not value:
+            raise AuditChainError(
+                f"line {line_number} carries no usable {name}; the file predates "
+                "the hash chain or the field was stripped"
+            )
+
+    if record["previous_hash"] != previous_hash:
+        raise AuditChainError(
+            f"line {line_number} does not follow the record before it: it chains "
+            f"to {record['previous_hash']!r} but the previous record sealed to "
+            f"{previous_hash!r}. A record was inserted, removed, or reordered"
+        )
+
+    expected = _record_hash(previous_hash, record)
+    if record["record_hash"] != expected:
+        raise AuditChainError(
+            f"line {line_number} has been altered since it was written: its "
+            f"contents seal to {expected!r}, not to the {record['record_hash']!r} "
+            "it claims"
+        )
+    return expected
+
+
 def _validate_timestamp(timestamp: Timestamp) -> None:
     if not isinstance(timestamp, (datetime, str)):
         raise InvalidDecisionError("timestamp must be an injected datetime or string")
@@ -288,6 +399,10 @@ def _decode_value(
 def _decision_from_record(record: object, line_number: int) -> Decision:
     if not isinstance(record, dict):
         raise AuditIntegrityError(f"line {line_number} is not a JSON object")
+
+    # The chain fields seal the record but are not part of the decision, so they
+    # are verified separately and dropped before the field check below.
+    record = {key: value for key, value in record.items() if key not in _CHAIN_FIELDS}
 
     expected_fields = {
         "decision_id",
@@ -430,27 +545,58 @@ class AuditLog:
             decision for decision in self._decisions if decision.subject == normalised
         )
 
+    def chain(self) -> tuple[str, ...]:
+        """The hash chain this log seals to, in append order.
+
+        Recomputed from the decisions rather than cached, so it cannot drift out
+        of step with what ``write`` would emit.
+        """
+
+        hashes: list[str] = []
+        previous = GENESIS_HASH
+        for decision in self._decisions:
+            record = _decision_to_record(decision)
+            record["previous_hash"] = previous
+            previous = _record_hash(previous, record)
+            hashes.append(previous)
+        return tuple(hashes)
+
+    @property
+    def head_hash(self) -> str:
+        """The single value that attests to the whole log.
+
+        ``GENESIS_HASH`` for an empty log. Publishing this one string somewhere
+        the writer cannot reach is what turns a detectable-in-principle chain
+        into an actually trustworthy one.
+        """
+
+        chain = self.chain()
+        return chain[-1] if chain else GENESIS_HASH
+
     def write(self, path: str | PathLike[str]) -> None:
-        """Write the complete log as deterministic UTF-8 JSONL."""
+        """Write the complete log as deterministic, hash-chained UTF-8 JSONL."""
 
         with Path(path).open("w", encoding="utf-8", newline="\n") as output:
+            previous = GENESIS_HASH
             for decision in self._decisions:
-                output.write(
-                    json.dumps(
-                        _decision_to_record(decision),
-                        ensure_ascii=False,
-                        allow_nan=False,
-                        separators=(",", ":"),
-                        sort_keys=True,
-                    )
-                )
+                record = _decision_to_record(decision)
+                record["previous_hash"] = previous
+                record["record_hash"] = _record_hash(previous, record)
+                previous = record["record_hash"]
+                output.write(_dumps(record))
                 output.write("\n")
 
     @classmethod
-    def read(cls, path: str | PathLike[str]) -> AuditLog:
-        """Read JSONL and validate IDs, types, and duplicate entries."""
+    def read(cls, path: str | PathLike[str], *, verify: bool = True) -> AuditLog:
+        """Read JSONL and validate the chain, IDs, types, and duplicates.
+
+        ``verify=False`` reads a log written before the chain existed. It is not
+        the default, because a reader that silently accepts an unsealed file
+        gives exactly the false assurance the chain was added to remove.
+        """
 
         log = cls()
+        previous = GENESIS_HASH
         with Path(path).open("r", encoding="utf-8", newline="") as source:
             for line_number, line in enumerate(source, start=1):
                 if not line.strip():
@@ -461,6 +607,12 @@ class AuditLog:
                     raise AuditIntegrityError(
                         f"invalid JSON on line {line_number}: {error.msg}"
                     ) from error
+                if verify:
+                    if not isinstance(record, dict):
+                        raise AuditIntegrityError(
+                            f"line {line_number} is not a JSON object"
+                        )
+                    previous = _verify_chain_link(record, previous, line_number)
                 decision = _decision_from_record(record, line_number)
                 try:
                     log.append(decision)
@@ -705,3 +857,33 @@ def summarise(
         },
         "overrides_applied": sum(decision.overridden for decision in effective),
     }
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Verify the hash chain of one or more audit logs.
+
+    Exits non-zero on the first failure so it can gate a build. An audit trail
+    nothing checks is a log file, not an audit trail.
+    """
+
+    parser = argparse.ArgumentParser(
+        prog="python -m recon.match.audit",
+        description="Verify the tamper-evident hash chain of an audit log.",
+    )
+    parser.add_argument("path", type=Path, nargs="+", help="JSONL audit log(s)")
+    args = parser.parse_args(argv)
+
+    status = 0
+    for path in args.path:
+        try:
+            log = AuditLog.read(path)
+        except (AuditError, OSError) as error:
+            print(f"FAIL  {path}: {error}")
+            status = 1
+        else:
+            print(f"OK    {path}: {len(log)} records, head {log.head_hash}")
+    return status
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

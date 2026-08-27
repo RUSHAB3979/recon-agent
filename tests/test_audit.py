@@ -8,6 +8,8 @@ import json
 import pytest
 
 from recon.match.audit import (
+    GENESIS_HASH,
+    AuditChainError,
     AuditLog,
     Decision,
     DuplicateDecisionError,
@@ -15,6 +17,7 @@ from recon.match.audit import (
     Override,
     OverrideSet,
     UnknownDecisionError,
+    main,
     summarise,
 )
 
@@ -178,3 +181,170 @@ def test_summarise_counts_original_and_effective_actions() -> None:
         "by_confidence_band": {"deterministic": 1, "medium": 1, "high": 1},
         "overrides_applied": 1,
     }
+
+
+# --------------------------------------------------------------------------
+# the tamper-evident chain
+#
+# decision_id is an identity and covers stage/subject/action only. record_hash
+# is a seal and covers everything. These tests exist because the difference is
+# the whole point: a log whose seal ignored the amount, the rule or the
+# reasoning would validate happily after someone rewrote them.
+# --------------------------------------------------------------------------
+
+
+def _rewrite(path, line_number, mutate):
+    """Rewrite one JSONL record in place, leaving every other byte untouched."""
+
+    lines = path.read_text(encoding="utf-8").splitlines()
+    record = json.loads(lines[line_number])
+    mutate(record)
+    lines[line_number] = json.dumps(
+        record, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+    )
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _three_line_log(tmp_path):
+    log = AuditLog(
+        [
+            make_decision(subject="UTR-100"),
+            make_decision(subject="UTR-200", amount=Decimal("42.00")),
+            make_decision(subject="UTR-300", action="abstain", confidence=None),
+        ]
+    )
+    path = tmp_path / "audit.jsonl"
+    log.write(path)
+    return log, path
+
+
+def test_chain_verifies_on_an_untouched_log(tmp_path) -> None:
+    log, path = _three_line_log(tmp_path)
+    reloaded = AuditLog.read(path)
+    assert [d.decision_id for d in reloaded] == [d.decision_id for d in log]
+    assert reloaded.head_hash == log.head_hash
+
+
+def test_first_record_chains_to_genesis(tmp_path) -> None:
+    _, path = _three_line_log(tmp_path)
+    first = json.loads(path.read_text(encoding="utf-8").splitlines()[0])
+    assert first["previous_hash"] == GENESIS_HASH
+
+
+def test_head_hash_of_an_empty_log_is_genesis() -> None:
+    assert AuditLog().head_hash == GENESIS_HASH
+
+
+def test_chain_links_each_record_to_its_predecessor(tmp_path) -> None:
+    log, path = _three_line_log(tmp_path)
+    records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    assert [r["record_hash"] for r in records] == list(log.chain())
+    for earlier, later in zip(records, records[1:]):
+        assert later["previous_hash"] == earlier["record_hash"]
+
+
+@pytest.mark.parametrize(
+    "field, value",
+    [
+        ("rule", "something_else_entirely"),
+        ("reasoning", "A different story about the same decision."),
+        ("confidence", 0.99),
+        ("overridable", False),
+        ("timestamp", "2030-01-01T00:00:00+00:00"),
+    ],
+)
+def test_editing_any_sealed_field_breaks_the_chain(tmp_path, field, value) -> None:
+    """The fields decision_id does NOT cover are exactly the ones at risk.
+
+    None of these change stage, subject or action, so the identity hash is
+    unmoved and the old integrity check passed every one of them.
+    """
+
+    _, path = _three_line_log(tmp_path)
+    _rewrite(path, 1, lambda record: record.__setitem__(field, value))
+    with pytest.raises(AuditChainError):
+        AuditLog.read(path)
+
+
+def test_editing_a_nested_amount_breaks_the_chain(tmp_path) -> None:
+    _, path = _three_line_log(tmp_path)
+
+    def inflate(record):
+        record["inputs"]["amount"] = "999999.00"
+        record["result"]["settled_amount"] = "999999.00"
+
+    _rewrite(path, 1, inflate)
+    with pytest.raises(AuditChainError):
+        AuditLog.read(path)
+
+
+def test_deleting_a_record_breaks_the_chain(tmp_path) -> None:
+    _, path = _three_line_log(tmp_path)
+    lines = path.read_text(encoding="utf-8").splitlines()
+    path.write_text("\n".join([lines[0], lines[2]]) + "\n", encoding="utf-8")
+    with pytest.raises(AuditChainError):
+        AuditLog.read(path)
+
+
+def test_reordering_records_breaks_the_chain(tmp_path) -> None:
+    _, path = _three_line_log(tmp_path)
+    lines = path.read_text(encoding="utf-8").splitlines()
+    path.write_text(
+        "\n".join([lines[0], lines[2], lines[1]]) + "\n", encoding="utf-8"
+    )
+    with pytest.raises(AuditChainError):
+        AuditLog.read(path)
+
+
+def test_resealing_only_the_edited_record_still_breaks_downstream(tmp_path) -> None:
+    """A tamperer who recomputes one hash does not get away with it.
+
+    This is what chaining buys over per-record hashing: the edited record can be
+    made self-consistent, but every record after it still points at the old one.
+    """
+
+    from recon.match.audit import _record_hash
+
+    _, path = _three_line_log(tmp_path)
+
+    def edit_and_reseal(record):
+        record["rule"] = "quietly_changed"
+        record["record_hash"] = _record_hash(record["previous_hash"], record)
+
+    _rewrite(path, 0, edit_and_reseal)
+    with pytest.raises(AuditChainError):
+        AuditLog.read(path)
+
+
+def test_stripping_the_chain_fields_is_refused_by_default(tmp_path) -> None:
+    _, path = _three_line_log(tmp_path)
+
+    def strip(record):
+        record.pop("record_hash")
+        record.pop("previous_hash")
+
+    _rewrite(path, 1, strip)
+    with pytest.raises(AuditChainError):
+        AuditLog.read(path)
+    # ...but an explicitly unverified read still parses it, which is the escape
+    # hatch for logs written before the chain existed.
+    assert len(AuditLog.read(path, verify=False)) == 3
+
+
+def test_decision_id_stays_an_identity_and_ignores_the_seal(tmp_path) -> None:
+    """Two decisions differing only in reasoning share an id but not a seal."""
+
+    first = make_decision()
+    second = replace(first, reasoning="Reworded, same verdict.")
+    assert first.decision_id == second.decision_id
+    assert AuditLog([first]).head_hash != AuditLog([second]).head_hash
+
+
+def test_cli_reports_ok_then_fails_after_tampering(tmp_path, capsys) -> None:
+    _, path = _three_line_log(tmp_path)
+    assert main([str(path)]) == 0
+    assert "OK" in capsys.readouterr().out
+
+    _rewrite(path, 2, lambda record: record.__setitem__("rule", "tampered"))
+    assert main([str(path)]) == 1
+    assert "FAIL" in capsys.readouterr().out

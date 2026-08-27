@@ -1,14 +1,54 @@
 # Multi-source Reconciliation Agent
 
+[![CI](https://github.com/RUSHAB3979/recon-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/RUSHAB3979/recon-agent/actions/workflows/ci.yml)
+
 Reconciles payment records across a gateway ledger, a settlement report and a
-bank statement — resolves what it can prove, and produces an explained,
-categorised list of what it could not.
+bank statement — resolves what it can prove, declines what it cannot, and
+produces an explained, categorised list of the remainder.
 
 **Razorpay AI Buildathon — AI Finance Controller track.**
 
-> Status: **benchmark and published baseline complete.** The synthetic data
-> generator, its self-validating answer key, and the B1 baseline that defines
-> the difficulty floor all run. The matching pipeline is next.
+> **Status.** The benchmark, the published baselines and the deterministic
+> engine are complete and measured. On the held-out primary batch the agent
+> resolves **94 of 100 cases at a 0.00% false-match rate** and 1.0000 allocation
+> precision, against a floor where the strongest arithmetic baseline reaches 89
+> and pays 16 false attributions for it.
+>
+> The six cases it does not resolve are **declined on purpose**. The
+> evidence-reading rung that acts on them is now built and tested
+> (`src/recon/match/adjudicator.py`); it is **off by default and excluded from
+> every number above**, because the published figures must not depend on a
+> network call. The exception classifier is still outstanding.
+>
+> Everything claimed below is produced by a command in this repo and re-run by
+> CI on every push.
+
+## Results
+
+Every number here comes out of `make report`, which scores the agent and both
+baselines through **the same scorer**. A benchmark that measured the floor with
+one instrument and the agent with another would be measuring the instruments.
+
+| | dev | primary | stress |
+|---|---|---|---|
+| B1 — exact joins only | 58 / 100 | 76 / 100 | 60 / 100 |
+| B2 — B1 + amount lookup | 80 / 100 | 89 / 100 | 85 / 100 |
+| B3 — B2 + fuzzy string matching | 79 / 100 | 90 / 100 | 82 / 100 |
+| **agent (deterministic only)** | **90 / 100** | **94 / 100** | **90 / 100** |
+| agent false-match rate | **0.00%** | **0.00%** | **0.00%** |
+| agent allocation precision | 1.0000 | 1.0000 | 1.0000 |
+| B2 false attributions | 26 | 16 | 20 |
+
+The two rows that matter are the last two. **B2 buys its cases by guessing** and
+books 16 wrong attributions on the primary batch to do it; the agent buys none
+that way. In a finance-ops loop a wrong match is worse than no match, because it
+becomes an invisible `RECONCILED` line that nobody ever looks at again, whereas
+an abstention becomes a named item on somebody's desk.
+
+Per-scenario, the deterministic engine closes `CORROBORATED_REFUND`,
+`CONTESTED_REFUND`, `REFUND_LATER_CYCLE` and `AMBIGUOUS_REFUND` at 100%. It
+scores **0/6 on `DESCRIBED_REFUND` — by abstaining on all six.** That is the
+designed residual, and the section below explains why it is there.
 
 ## Linkage is not reconciliation
 
@@ -42,10 +82,148 @@ counterpart at all?").
 ## Quick start
 
 ```bash
-make data      # generate all three families (development, primary, stress)
-make baseline  # run B1 and B2, report the difficulty floor D per family
-make verify    # self-validation suite + ambiguity + stats
+make data          # generate all three families (development, primary, stress)
+make agent         # run the pipeline, print per-pass yield and per-gate eliminations
+make report        # score the agent and both baselines through one scorer
+make verify        # tests + baselines + report + ambiguity + audit chain + stats
 ```
+
+The evidence-reading rung is opt-in and never contributes to a published
+number:
+
+```bash
+python -m recon.match.controller data/dev --adjudicate
+```
+
+With no `ANTHROPIC_API_KEY` set it selects the declining reader, so the command
+still runs — and still produces the deterministic result.
+
+## Architecture
+
+```
+gateway ledger ────┐
+settlement detail  ├──> 1. Normalizer          integer paise, canonical dates,
+settlement summary │                            settleability decided once
+bank statement ────┘        │
+pricing rules               ▼
+                   2. Control-equation engine  line, summary, roll-up, tie-out
+                            │ residual deltas
+                            ▼
+                   3. Pass ladder              ordered, each pass consuming what
+                            │                   the one before it could not
+                            ├── exact join         identifier + amount + window
+                            └── refund corroboration
+                                   nine admissibility gates; resolves a delta
+                                   only when EXACTLY ONE global allocation
+                                   survives all nine, otherwise ABSTAINS
+                            │ declined residual  (16 lines on primary)
+                            ▼
+                   4. Evidence reader  (built; opt-in via --adjudicate)
+                            reads the evidence the gates cannot read;
+                            may name one survivor or confirm the abstention;
+                            never re-does arithmetic the gates already did
+                            │
+                            ▼
+                   5. Exception classifier  ⟵ NOT BUILT YET
+                            │
+                            ▼
+                   6. Report + audit trail    hash-chained, every decision
+                                              overridable
+```
+
+**The model is not in the arithmetic path, and it is not in the search path
+either.** An earlier design had the adjudicator propose which record to test
+while the engine ruled on it. That was cut: proposing candidates is a search
+problem the gates already solve exhaustively and deterministically, so the model
+was being asked to guess at something already known, and its answer could only
+be right by accident or redundant by construction.
+
+What replaces it is narrower and honest. The ladder runs to completion first.
+The adjudicator is handed **only the lines the gates could not separate**,
+together with the surviving candidates and the evidence that is not arithmetic —
+and it either names one or says it cannot. It never sees a case the gates
+resolved, never re-opens one, and never computes a sum. On the primary batch
+that is 16 lines out of 451, which is the point: **LLM call rate is a reported
+metric and low is good.**
+
+Those 16 are deliberately a mixed population — 12 are resolvable from the
+settlement note, 4 are not — so an adjudicator that resolves everything handed
+to it scores the first group and false-matches the second. **Abstention has to
+survive contact with the model.**
+
+### What the reader can be worth, measured
+
+The rung is a one-method protocol, `EvidenceReader`, and the reader is injected.
+Three ship: a **declining** reader (the default), an **Anthropic** reader, and a
+**scripted** one for tests. With the default, the pipeline runs with no API key
+and reproduces the deterministic numbers **exactly** — that equality is a test,
+not an assurance.
+
+To bound what the rung can be worth, `tests/test_adjudicator.py` runs a reader
+that answers from the answer key. It is not a forecast of model accuracy; it is
+the ceiling on the plumbing, and if a perfect reader could not lift the score
+through this rung then the rung would be broken regardless of what is attached
+to it. Measured, on the residual and with the real scorer:
+
+| | dev | primary | stress |
+|---|---|---|---|
+| deterministic engine | 90 / 100 | 94 / 100 | 90 / 100 |
+| lines handed to the reader | 28 | 16 | 26 |
+| **perfect reader (ceiling)** | 100 / 100 | 100 / 100 | 100 / 100 |
+
+The ceiling is reached **while still abstaining** on the four primary
+`AMBIGUOUS_REFUND` cases, whose refunds are unallocated in the answer key — a
+reader that claimed those would score below the ceiling, not above it. So the
+achievable band on primary is **94 to 100**, and where a real model lands inside
+it is an empirical question this repo answers by running the command, not by
+asserting it.
+
+Four properties are structural rather than promised, and each has a test:
+
+- the rung is handed the abstention list by the runner, so it **cannot see a
+  resolved case**;
+- it answers with a letter from a closed shortlist, and a letter outside it is
+  **discarded, not repaired** — it cannot name an event the gates never admitted;
+- amounts and dates are **absent from the prompt**, because every candidate
+  matched the delta exactly and they carry no discriminating information; and
+- a confidence below the floor is recorded as a **decline**.
+
+Cost is metered per call (input, output and cached tokens) and printed by the
+command that incurs it. The stable system prompt is marked cacheable, since
+paying full input price for the same preamble on every line would make the
+reported cost per batch wrong in the flattering direction.
+
+**Ties are never broken.** Not by frequency, not by a prior, not by batch
+history, not by model plausibility. Gate 9 — that no second candidate survives
+gates 1–8 — is what makes a resolution a proof rather than a guess.
+
+### The nine gates
+
+An anonymous settlement line resolves only when exactly one candidate survives
+all nine. `make agent` prints how many candidates each gate eliminated, so a
+gate that does nothing is visible rather than asserted.
+
+| # | gate | question |
+|---|---|---|
+| 1 | unconsumed | is the event still unclaimed by another allocation? |
+| 2 | exact amount | does it reproduce the delta exactly, in integer paise? |
+| 3 | recovery window | does it fall inside the declared settlement window? |
+| 4 | currency | do the line and the event agree? |
+| 5 | lineage | does the parent payment exist and did it itself settle? |
+| 6 | sign | is a refund line explained by a refund event? |
+| 7 | controls hold | does the settlement still tie out after the allocation? |
+| 8 | global feasibility | does committing to it leave every other line solvable? |
+| 9 | uniqueness | does **no** second candidate survive gates 1–8? |
+
+Gate 8 is the only global one. It is decided by **forcing** the pairing, not by
+ranking it: take the candidate edge, remove both endpoints, re-solve the
+residual assignment problem, and keep the candidate only if the residual still
+reaches the baseline matching size minus one. That asks whether *some*
+consistent global assignment uses this pairing — deleting the edge instead would
+ask whether *every* one does, which is strictly stronger and would throw away
+admissible candidates. Whether the pairing is the *only* one is gate 9's job,
+and keeping the two questions in two gates is what keeps "could explain this
+line" from being reported as "explains this line".
 
 ## Dataset at a glance
 
@@ -125,6 +303,8 @@ disposition. It may not read narration, attempt refund recovery, or abstain.
 unconsumed refund event whose amount reproduces it exactly — no window, no
 lineage, no uniqueness test, no abstention.
 
+**B3 is B2 with fuzzy string matching**, described in the next section.
+
 **D is published against B2, and that is deliberate.** B1 flatters the
 benchmark. B2 is the attack a sceptical reviewer would actually run, and running
 it here is cheaper than having it run on us. An earlier version of this benchmark
@@ -144,17 +324,60 @@ alone would award full marks to a false match. Claimed
 `answer_key_allocations.csv`, and a right outcome with a wrong attribution is
 scored wrong.
 
-The result is that **D is attributable**, and this is asserted in the test suite
-rather than observed once: the baselines solve every scenario outside the
-refund-attribution axis completely. So the gap between a plain script and the
-agent is exactly one capability — attributing an anonymous refund line, or
-proving that it cannot be attributed and declining.
+## The residual, and what it does and does not prove
 
-That concentration is stated plainly because it is the obvious line of attack.
-The defence is that the two halves are different skills. `CORROBORATED_REFUND`
-and `CONTESTED_REFUND` reward *proving* a unique allocation; `AMBIGUOUS_REFUND`
-rewards *refusing* to allocate. An agent that solves the first by guessing scores
-zero on the second.
+`DESCRIBED_REFUND` is the class the deterministic ladder abstains on. It is
+structurally identical to `AMBIGUOUS_REFUND` — two parent payments, two refunds
+of the same amount, two settlements each carrying one anonymous refund line — so
+every gate leaves exactly two survivors. The only difference is that its parents
+come from different product categories and the settlement note is written in the
+vocabulary of one of them, while `AMBIGUOUS_REFUND`'s parents share a category
+so its note is present, on-topic, and separates nothing.
+
+The answer key inverts between the pair: `AMBIGUOUS_REFUND` leaves its refunds
+unallocated, so claiming one is a false match; `DESCRIBED_REFUND` allocates them,
+so declining is a miss. **An agent that always resolves scores zero on the first
+class, and one that always declines scores zero on the second.**
+
+### What has actually been measured
+
+The obvious objection is that a note column means fuzzy string matching would
+have been enough. That objection ships as **runnable code** — B3 is B2 with its
+arbitrary tie-break replaced by the strongest cheap lexical ranking, content-token
+Jaccard or character sequence ratio, whichever is higher. Its accuracy is not the
+measurement, because a different tie-break consumes different events and shifts
+what later lines can claim. The measurement is per decision: over every
+multi-candidate line with a knowable answer, how often the top-ranked candidate
+is the right one, against the sum of 1/k expected from a k-sided coin.
+
+| family | decidable lines | lexical hits | expected by chance | lift |
+|---|---:|---:|---:|---:|
+| primary | 17 | 8 | 8.5 | −0.029 |
+| stress | 30 | 14 | 14.1 | −0.003 |
+| development | 31 | 13 | 13.9 | −0.030 |
+
+Maximum content-token overlap between a note and any candidate's description is
+**0** on all three families, and the lift is negative on all three. String
+similarity is not doing badly here; it has nothing to rank on.
+
+### What that does not prove
+
+Three things have been shown: **arithmetic cannot separate these candidates,
+exact matching cannot, and lexical or fuzzy string similarity performs at
+chance.** That is the whole of the claim.
+
+It does **not** show that a language model is necessary. A semantic embedding
+model, a trained classifier, a product ontology, or a sufficiently maintained
+hand-written map from product name to category could each plausibly close this
+class too — the last one certainly could, at the cost of an entry for every
+product in every merchant's catalogue and a re-edit on every catalogue change.
+That is an argument about maintenance cost, not about capability, and it is
+stated as one.
+
+The defensible claim is narrower and sufficient: **this residual requires
+semantic interpretation of evidence that the deterministic accounting ladder
+cannot reach.** Which mechanism supplies that interpretation is an engineering
+choice, and a language model is the one this repo makes.
 
 ## Control equations
 
@@ -174,51 +397,50 @@ Money is **integer paise** everywhere, with `Decimal` confined to construction
 boundaries. A reconciliation engine that reports a ₹0.01 tolerance breach caused
 by its own binary-float error is worse than useless.
 
-## Architecture
+## Audit trail
 
-```
-gateway ledger ──┐
-settlement detail ├──> 1. Normalizer            integer paise, canonical dates
-settlement summary│
-bank statement ──┘         │
-pricing rules              ▼
-                  2. Control-equation engine    line, summary, roll-up, tie-out
-                           │ residual deltas
-                           ▼
-                  3. Corroboration              nine admissibility gates;
-                     resolves a delta only when EXACTLY ONE
-                     global allocation survives all nine
-                           │ still ambiguous
-                           ▼
-                  4. LLM adjudicator            proposes which record to TEST;
-                     the deterministic engine decides whether it passes
-                           │
-                           ▼
-                  5. Exception classifier       named categories, not a total
-                           │
-                           ▼
-                  6. Report + audit trail       every decision overridable
-```
+Every decision records what it saw, which rule fired, what it concluded, with
+what confidence, and whether it is overridable. Two hashes do two jobs:
 
-**Deterministic core, LLM at the edges.** The adjudicator cannot compute a sum;
-it can only ask whether one holds. That makes "no LLM arithmetic" *structural
-rather than aspirational* — the model proposes candidates, the engine rules.
+- **`decision_id`** is an *identity*. It covers stage, subject and action only,
+  which is what makes it stable enough to be referenced by an override and
+  deduplicated on append.
+- **`record_hash`** is a *seal*. It covers the complete record and chains to its
+  predecessor: `SHA256(previous_hash ‖ canonical_json(record))`. Editing an
+  amount, a rule, a confidence or a reasoning string breaks it; so does deleting,
+  inserting or reordering a record, because every downstream link then points at
+  a hash that no longer exists.
 
-**Ties are never broken.** Not by frequency, not by a prior, not by batch
-history, not by model plausibility. Gate 9 — that no second candidate survives
-gates 1–8 — is what makes a resolution a proof rather than a guess. Where two
-survive, the agent abstains, because a wrong match becomes an invisible
-"resolved" line in the audit trail whereas an exception is a named problem.
+`make verify-audit` recomputes the whole chain. The final `head_hash` is a single
+value that attests to the entire log.
+
+**What this does not do:** it does not stop someone who can rewrite the whole
+file, since they can recompute the chain. Detecting that needs the head hash held
+where the writer cannot reach it. The chain makes tampering *detectable given a
+trusted head*, not impossible.
 
 ## Layout
 
 ```
-src/recon/datagen/      generator, config, narration synthesis, serialisation
-src/recon/metrics/      B1 baseline, scoring harness
-tests/                  answer-key self-validation + baseline tests, 4 seeds
-tools/ambiguity.py      recovery-ambiguity measurement
+src/recon/datagen/      generator, catalogue, config, serialisation
+src/recon/match/
+  normalize.py          parsing, integer paise, settleability
+  controls.py           the control equations
+  passes.py             the ordered pass ladder
+  recovery.py           the nine-gate corroboration pass + bipartite solver
+  adjudicator.py        the evidence-reading rung (opt-in, injected reader)
+  caseload.py           grouping rows into scoreable cases
+  controller.py         the pipeline, per-pass yield, per-gate eliminations
+  audit.py              hash-chained decision log + human override layer
+src/recon/metrics/
+  score.py              one scorer, used by both the agent and the baselines
+  baselines.py          B1, B2, B3 and the lexical hit-rate measurement
+  report.py             the published comparison table
+tests/                  answer-key self-validation + engine tests, 4 seeds
+tools/ambiguity.py      independent recovery-ambiguity measurement
 tools/refresh_stats.py  regenerates the README table from data/
 docs/DATA_SPEC.md       schema, scenario classes, guarantees, limitations
+docs/BUILD_PLAN.md      phase status and what is deliberately not built
 docs/superpowers/specs/ the authoritative benchmark design record
 data/dev/               development family (the only tuning surface)
 data/primary/           headline batch      (never tune here)
@@ -227,6 +449,14 @@ data/stress/            rare-class batch    (never tune here)
 
 Tests run across four seeds, not one. A labelling bug once passed because the
 defective case did not occur in seed 42.
+
+## Continuous integration
+
+CI re-runs the answer-key suite, regenerates all three datasets and fails if a
+single byte differs from the committed CSVs, re-derives every published baseline
+and the agent's score on a machine that is not the author's, verifies the audit
+chain, and fails the build if the generated README table above has gone stale.
+The intent is that no number in this repo has to be taken on the author's word.
 
 ## Honest limitation
 
@@ -239,6 +469,12 @@ The same honesty applies to the floor above. That defect was caught by
 attacking this benchmark rather than by a reviewer finding it — but it did
 survive, unnoticed, through a version considered finished. The safeguard is
 that the attack now runs as a test, on every seed.
+
+`DESCRIBED_REFUND` carries one more. Real operations notes sometimes *do* quote
+the product name, and those cases would be lexically solvable. Forcing token
+overlap to exactly zero isolates the semantic channel rather than simulating how
+often it occurs, so the class measures whether an agent can read — not how often
+real reconciliation needs it to.
 
 ## License
 
