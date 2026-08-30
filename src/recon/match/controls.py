@@ -83,6 +83,16 @@ class Finding:
 
     category: str
     detail: str
+    # How much money an operator has to chase for this break, in paise. It is
+    # the RANKING key for the exception list, and it is recorded here rather
+    # than parsed back out of ``detail`` because a report that re-reads its own
+    # prose is one message rewrite away from silently sorting by nothing.
+    #
+    # The measure is deliberately per-category and stated rather than uniform:
+    # a variance is worth the size of the variance, an uncredited settlement is
+    # worth the whole settlement, and a duplicate credit is worth the surplus.
+    # Zero means the break is real but the released files do not size it.
+    exposure_paise: int = 0
 
     @property
     def is_hard(self) -> bool:
@@ -101,6 +111,10 @@ def _line_findings(
                 "LINE_EQUATION_VIOLATION",
                 f"{line.detail_id}: net {line.net_effect_paise} != gross "
                 f"{line.gross_effect_paise} - fee {line.fee_paise} - tax {line.tax_paise}",
+                abs(
+                    line.net_effect_paise
+                    - (line.gross_effect_paise - line.fee_paise - line.tax_paise)
+                ),
             )
         )
 
@@ -114,6 +128,7 @@ def _line_findings(
             Finding(
                 "UNATTRIBUTED_SETTLEMENT_LINE",
                 f"{line.detail_id}: {line.line_type} line carries no event_id",
+                abs(line.net_effect_paise),
             )
         )
         return findings
@@ -125,6 +140,7 @@ def _line_findings(
             Finding(
                 "UNKNOWN_EVENT_REFERENCE",
                 f"{line.detail_id}: event_id {event_id} is not in the ledger",
+                abs(line.net_effect_paise),
             )
         )
         return findings
@@ -139,6 +155,10 @@ def _line_findings(
             Finding(
                 "UNKNOWN_METHOD",
                 f"{line.detail_id}: method {event.method} is not in pricing rules",
+                # The unverifiable amount is the deduction, not the whole line:
+                # the gross is stated by the ledger, and only the fee and tax
+                # are the part no rate card can be checked against.
+                abs(line.fee_paise + line.tax_paise),
             )
         )
         return findings
@@ -151,6 +171,7 @@ def _line_findings(
                 "FEE_TAX_VARIANCE",
                 f"{line.detail_id}: fee {line.fee_paise} != expected {want_fee} "
                 f"({rule.fee_rate_bps}bps of {line.gross_effect_paise})",
+                abs(line.fee_paise - want_fee),
             )
         )
     elif line.tax_paise != want_tax:
@@ -161,6 +182,7 @@ def _line_findings(
                 "FEE_TAX_VARIANCE",
                 f"{line.detail_id}: tax {line.tax_paise} != expected {want_tax} "
                 f"({rule.gst_rate_bps}bps of {want_fee})",
+                abs(line.tax_paise - want_tax),
             )
         )
     return findings
@@ -194,7 +216,11 @@ def settlement_findings(
     """
     settlement: Settlement | None = batch.settlements.get(settlement_id)
     if settlement is None:
-        return [Finding("SETTLEMENT_MISSING", f"{settlement_id} has no summary row")]
+        # Exposure zero, and not because the break is small: with no summary
+        # row there is nothing in the released files to size it from. Inventing
+        # a number here would put a fabricated amount at the top of an operator
+        # work queue.
+        return [Finding("SETTLEMENT_MISSING", f"{settlement_id} has no summary row", 0)]
 
     lines = batch.details_by_settlement.get(settlement_id, ())
     findings: list[Finding] = []
@@ -213,6 +239,7 @@ def settlement_findings(
                 Finding(
                     "ROLLUP_MISMATCH",
                     f"{label} {declared} != unique-line roll-up {computed}",
+                    abs(declared - computed),
                 )
             )
 
@@ -223,17 +250,27 @@ def settlement_findings(
                 "SUMMARY_EQUATION_VIOLATION",
                 f"net {declared_net} != gross - refund - fee - tax = "
                 f"{settlement.control_net_paise}",
+                abs(declared_net - settlement.control_net_paise),
             )
         )
     if declared_net != net:
         findings.append(
-            Finding("ROLLUP_MISMATCH", f"net {declared_net} != unique-line roll-up {net}")
+            Finding(
+                "ROLLUP_MISMATCH",
+                f"net {declared_net} != unique-line roll-up {net}",
+                abs(declared_net - net),
+            )
         )
 
     credits = batch.credits_for(settlement)
     if not credits:
         findings.append(
-            Finding("BANK_CREDIT_MISSING", f"no bank row for utr {settlement.utr}")
+            Finding(
+                "BANK_CREDIT_MISSING",
+                f"no bank row for utr {settlement.utr}",
+                # The whole settlement is unfunded, so the exposure is its net.
+                abs(declared_net),
+            )
         )
     elif len(credits) > 1:
         findings.append(
@@ -241,6 +278,11 @@ def settlement_findings(
                 "BANK_CREDIT_DUPLICATE",
                 f"utr {settlement.utr} credited {len(credits)} times "
                 f"({', '.join(credit.bank_row_id for credit in credits)})",
+                # The surplus, not the total credited. The settlement was owed
+                # its net once; what has to be returned is everything above it.
+                abs(
+                    sum(credit.credit_amount_paise for credit in credits) - declared_net
+                ),
             )
         )
     else:
@@ -251,12 +293,20 @@ def settlement_findings(
                 Finding(
                     "BANK_AMOUNT_MISMATCH",
                     f"credit {credited} != settlement net {declared_net}",
+                    abs(credited - declared_net),
                 )
             )
 
     duplicates = batch.duplicate_detail_counts.get(settlement_id, 0)
     if duplicates:
         findings.append(
-            Finding(DUPLICATE_WARNING, f"{duplicates} duplicate detail_id row(s) ignored")
+            # Exposure zero on purpose: the roll-up already used the
+            # deduplicated set, so no money moved. This is evidence that the
+            # duplicates were seen, not a break to be worked.
+            Finding(
+                DUPLICATE_WARNING,
+                f"{duplicates} duplicate detail_id row(s) ignored",
+                0,
+            )
         )
     return findings

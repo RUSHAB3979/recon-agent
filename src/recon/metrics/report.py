@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Sequence
 
 from recon.match.controller import RunResult, reconcile
+from recon.match.exceptions import build_exception_list, format_text
 from recon.match.passes import DEFAULT_LADDER, Pass
 from recon.metrics import baselines
 from recon.metrics.score import AnswerKey, ScoreReport, score
@@ -58,6 +59,72 @@ def _row(label: str, report: ScoreReport) -> str:
         f"{allocations.precision:>10.4f} {allocations.recall:>8.4f} "
         f"{allocations.false_positives:>6}"
     )
+
+
+def _print_classification(agent: ScoreReport) -> None:
+    """Print the exception breakdown by category, and the two rates beside it.
+
+    The project brief asks for a breakdown by category rather than a total, and
+    for good reason: a single exception count says nothing about whether the
+    agent can tell one kind of break from another. Precision and recall are
+    printed per category, and the confusion matrix underneath shows where a
+    misclassification actually went -- a category that is wrong in a consistent
+    direction is a fixable rule, and a category that scatters is a design flaw.
+
+    Two numbers follow that are easy to omit and change how the rest reads. The
+    abstention split separates a refusal that was RIGHT (the case was genuinely
+    unresolvable) from one that cost a resolution the agent could have made;
+    without it, abstention looks free. And the NO_ACTION false-positive rate
+    measures the trap class -- terminal payments that were never going to
+    settle. An agent that files those as exceptions inflates its exception list
+    with work that does not exist, so the rate is published whether or not it
+    flatters the run.
+    """
+    print("\n    exception classification (precision / recall / support):")
+    if agent.exception_categories:
+        width = max(len(name) for name in agent.exception_categories)
+        for category, metrics in sorted(agent.exception_categories.items()):
+            print(
+                f"      {category:<{width}}  {metrics.precision:>7.4f} / "
+                f"{metrics.recall:>6.4f} / {metrics.support:>3}"
+            )
+    else:
+        print("      (no exceptions expected in this family)")
+
+    print("\n    confusion (expected -> reported):")
+    if agent.exception_confusion:
+        for expected, predictions in sorted(agent.exception_confusion.items()):
+            cells = ", ".join(
+                f"{predicted}={count}" for predicted, count in sorted(predictions.items())
+            )
+            print(f"      {expected}: {cells}")
+    else:
+        print("      (none)")
+
+    print(
+        f"\n    abstentions {agent.abstention_count:>4}  "
+        f"(correct refusals {agent.correct_refusals}, "
+        f"missed resolutions {agent.missed_resolutions})"
+    )
+    print(
+        f"    no_action false positives "
+        f"{agent.no_action_false_positives}/{agent.no_action_support} "
+        f"({agent.no_action_false_positive_rate:.4f})"
+    )
+
+
+def _print_queue(run: RunResult) -> None:
+    """Print the head of the operator queue this run would hand to a human.
+
+    Printed in the metrics report on purpose. The exception list is the
+    deliverable the brief calls for -- "the exceptions it could not resolve" --
+    and keeping it in a file nobody opens while the report prints only rates
+    would make the honest part of this project the easy part to miss.
+    """
+    items = build_exception_list(run)
+    print("\n    operator queue:")
+    for line in format_text(items, limit=5, compact=True).splitlines():
+        print(f"      {line}" if line else "")
 
 
 def render(directory: str | Path, ladder: Sequence[Pass] = DEFAULT_LADDER) -> None:
@@ -108,6 +175,9 @@ def render(directory: str | Path, ladder: Sequence[Pass] = DEFAULT_LADDER) -> No
                 continue
             mark = "" if count else "   (no effect on this data)"
             print(f"      {name:<28} {count:>5}{mark}")
+
+    _print_classification(agent)
+    _print_queue(run)
 
     print(
         f"\n    throughput  {run.throughput:>9.0f} records/sec "

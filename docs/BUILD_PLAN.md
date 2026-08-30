@@ -369,8 +369,40 @@ message while verifying nothing. The expansion moved into the module, and
 the command now exits non-zero when there is nothing to verify, because a
 check that passes over the empty set is not a check.
 
-Still outstanding: the exception classifier, the abstention/coverage curve,
-and the demo surface. If a number disappoints it gets reported, not re-tuned.
+### Phase G -- the exception list
+
+Step 6 of the build order turned out not to be "build a classifier". The
+control equations in `controls.py` plus the first-hard-finding rule in
+`_verdict` were already assigning categories, and measuring them BEFORE
+building anything showed precision and recall of 1.00 on all four categories in
+all three families, with a diagonal confusion matrix and no `NO_ACTION` false
+positives. Writing a classifier would have been writing a second one.
+
+What was actually missing was two things the project's own rules require and
+nothing produced. `CLAUDE.md` asks for an "exception breakdown by category (not
+just a total)" -- computed by the scorer, never printed by the report. And rule
+4's differentiator, "these 14 I couldn't resolve, and here's why", had no
+artifact at all: exceptions existed only as in-memory `Verdict` objects.
+
+So `recon.match.exceptions` renders the workable subset of a finished run as a
+ranked CSV, `make exceptions` writes one per family, and `report.py` now prints
+the category table, the confusion matrix, the abstention split and the
+`NO_ACTION` false-positive rate.
+
+Ranking is by exposure, which meant `Finding` had to start carrying the size of
+each break -- a report that parses a rupee figure back out of its own prose is
+one message rewrite away from silently sorting by nothing. The measure is
+per-category and stated at each construction site, because the categories are
+not commensurable: a variance is worth the variance, an uncredited settlement
+the whole settlement, a duplicate credit only the surplus.
+
+Two figures are reported separately and never summed: control breaks (money
+that does not tie out) and abstentions (money that arrived and is not yet
+attributed). On every family the abstentions are the larger number, so a
+combined total would be dominated by the part that is not missing.
+
+Still outstanding: the abstention/coverage curve and the demo surface. If a
+number disappoints it gets reported, not re-tuned.
 
 ---
 
