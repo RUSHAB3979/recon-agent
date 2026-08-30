@@ -56,7 +56,7 @@ from recon.match.adjudicator import (
 from recon.match.caseload import CaseUnit, load_caseload
 from recon.match.controls import DUPLICATE_WARNING, Finding, settlement_findings
 from recon.match.journal import write_journal
-from recon.match.normalize import Batch, load_batch
+from recon.match.normalize import Batch, DetailLine, load_batch
 from recon.match.passes import DEFAULT_LADDER, Claim, Pass, PassResult
 from recon.metrics.score import AgentOutput, CaseDecision
 
@@ -112,6 +112,22 @@ class LadderRun:
         grouped: dict[str, list[Claim]] = {}
         for claim in self.accepted:
             grouped.setdefault(claim.settlement_id, []).append(claim)
+        return {key: tuple(value) for key, value in grouped.items()}
+
+    def abstained_lines_by_settlement(self) -> Mapping[str, tuple[str, ...]]:
+        """Detail ids the ladder declined, keyed by settlement.
+
+        Separate from ``abstentions_by_settlement`` because that one returns
+        prose for a human and this one returns keys for arithmetic. Parsing the
+        ids back out of the prose would work until somebody improves the
+        wording.
+        """
+        grouped: dict[str, list[str]] = {}
+        for result in self.per_pass:
+            for abstention in result.abstentions:
+                grouped.setdefault(abstention.settlement_id, []).append(
+                    abstention.detail_id
+                )
         return {key: tuple(value) for key, value in grouped.items()}
 
     def abstentions_by_settlement(self) -> Mapping[str, tuple[str, ...]]:
@@ -222,9 +238,15 @@ class Verdict:
     reasons: tuple[str, ...]
     allocations: frozenset[tuple[str, str]]
     confidence: float
+    # Money an operator has to chase for this case, in paise. Carried on the
+    # decision rather than recomputed by the report, so the exception list and
+    # the audit record cannot disagree about what a case is worth.
+    exposure_paise: int = 0
 
 
-def _disposition_without_settlement(batch: Batch, case: CaseUnit) -> tuple[str, str | None, list[str]]:
+def _disposition_without_settlement(
+    batch: Batch, case: CaseUnit
+) -> tuple[str, str | None, list[str], int]:
     """Decide a case whose events appear in no settlement at all.
 
     The NOT_SETTLEABLE trap lives here. A CREATED or FAILED payment that never
@@ -239,19 +261,31 @@ def _disposition_without_settlement(batch: Batch, case: CaseUnit) -> tuple[str, 
             NO_ACTION,
             None,
             [f"all {len(events)} events are terminal before settlement ({', '.join(statuses)})"],
+            # Zero exposure, and that is the whole point of the trap class:
+            # nothing is owed, nothing is missing, and an operator queue that
+            # ranked these above a real break would be actively harmful.
+            0,
         )
-    unsettled = sorted({event.status for event in events if event.is_settleable})
+    settleable = [event for event in events if event.is_settleable]
+    unsettled = sorted({event.status for event in settleable})
     return (
         EXCEPTION,
         CAPTURED_UNSETTLED,
         [f"{len(events)} events with status {unsettled} appear in no settlement"],
+        sum(abs(event.amount_paise) for event in settleable),
     )
 
 
-def _verdict(batch: Batch, case: CaseUnit, ladder: LadderRun) -> Verdict:
+def _verdict(
+    batch: Batch,
+    case: CaseUnit,
+    ladder: LadderRun,
+    lines: Mapping[str, DetailLine],
+) -> Verdict:
     attributed = ladder.attributed_detail_ids
     claims_by_settlement = ladder.claims_by_settlement()
     abstentions_by_settlement = ladder.abstentions_by_settlement()
+    abstained_lines_by_settlement = ladder.abstained_lines_by_settlement()
 
     allocations: set[tuple[str, str]] = set()
     for settlement_id in case.settlement_ids:
@@ -259,7 +293,9 @@ def _verdict(batch: Batch, case: CaseUnit, ladder: LadderRun) -> Verdict:
             allocations.add((claim.event_id, settlement_id))
 
     if not case.has_settlements:
-        outcome, category, reasons = _disposition_without_settlement(batch, case)
+        outcome, category, reasons, exposure = _disposition_without_settlement(
+            batch, case
+        )
         return Verdict(
             case_id=case.case_id,
             outcome=outcome,
@@ -267,6 +303,7 @@ def _verdict(batch: Batch, case: CaseUnit, ladder: LadderRun) -> Verdict:
             reasons=tuple(reasons),
             allocations=frozenset(allocations),
             confidence=1.0,
+            exposure_paise=exposure,
         )
 
     findings: list[Finding] = []
@@ -292,6 +329,15 @@ def _verdict(batch: Batch, case: CaseUnit, ladder: LadderRun) -> Verdict:
             reasons=reasons,
             allocations=frozenset(allocations),
             confidence=0.0,
+            # The exposure of an abstention is the money sitting on the lines
+            # nobody has attributed. It is unallocated, not lost, which is why
+            # this is a different queue from a control break of the same size.
+            exposure_paise=sum(
+                abs(lines[detail_id].net_effect_paise)
+                for settlement_id in case.settlement_ids
+                for detail_id in abstained_lines_by_settlement.get(settlement_id, ())
+                if detail_id in lines
+            ),
         )
 
     hard = [finding for finding in findings if finding.is_hard]
@@ -306,6 +352,9 @@ def _verdict(batch: Batch, case: CaseUnit, ladder: LadderRun) -> Verdict:
             reasons=reasons,
             allocations=frozenset(allocations),
             confidence=1.0,
+            # Every hard finding, not only the one that named the category. A
+            # case with three breaks is worth all three to whoever works it.
+            exposure_paise=sum(finding.exposure_paise for finding in hard),
         )
 
     return Verdict(
@@ -315,6 +364,7 @@ def _verdict(batch: Batch, case: CaseUnit, ladder: LadderRun) -> Verdict:
         reasons=reasons,
         allocations=frozenset(allocations),
         confidence=1.0,
+        exposure_paise=0,
     )
 
 
@@ -325,6 +375,11 @@ class RunResult:
     verdicts: tuple[Verdict, ...]
     ladder: LadderRun
     batch: Batch
+    # The case partition this run decided. Retained so a consumer -- the
+    # exception list, the journal -- can name the settlements, events and bank
+    # rows behind a verdict without re-reading the caseload from disk and
+    # risking a different file.
+    cases: tuple[CaseUnit, ...]
     elapsed_seconds: float
     record_count: int
     per_pass_names: tuple[str, ...] = field(default_factory=tuple)
@@ -364,12 +419,16 @@ def reconcile(
     batch = load_batch(directory)
     cases = load_caseload(directory)
     ladder_run = run_ladder(batch, ladder)
-    verdicts = tuple(_verdict(batch, case, ladder_run) for case in cases)
+    # Built once, not per case: a lookup rebuilt inside the loop would turn the
+    # disposition step quadratic for no gain.
+    lines = {line.detail_id: line for line in batch.details}
+    verdicts = tuple(_verdict(batch, case, ladder_run, lines) for case in cases)
     elapsed = time.perf_counter() - started
     return RunResult(
         verdicts=verdicts,
         ladder=ladder_run,
         batch=batch,
+        cases=cases,
         elapsed_seconds=elapsed,
         record_count=len(batch.events) + len(batch.details) + len(batch.settlements),
         per_pass_names=tuple(rung.name for rung in ladder),

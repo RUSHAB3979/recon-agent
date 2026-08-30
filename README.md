@@ -87,6 +87,7 @@ make agent         # run the pipeline, print per-pass yield and per-gate elimina
 make report        # score the agent and both baselines through one scorer
 make verify        # tests + baselines + report + ambiguity + audit chain + stats
 make audit         # write runs/<family>/audit.jsonl -- every sealed decision
+make exceptions    # write runs/<family>/exceptions.csv -- the operator queue
 ```
 
 The evidence-reading rung is opt-in and never contributes to a published
@@ -398,6 +399,75 @@ Money is **integer paise** everywhere, with `Decimal` confined to construction
 boundaries. A reconciliation engine that reports a ₹0.01 tolerance breach caused
 by its own binary-float error is worse than useless.
 
+## The exception list
+
+The brief asks for "an honest exception list", and rule 4 of this project is
+that unmatched rows are never hidden. `make exceptions` writes
+`runs/<family>/exceptions.csv` -- one row per case a human has to work, with
+the evidence, the records behind it, and a named next step.
+
+| family | open items | control breaks | exposure | unattributed | value |
+|---|---:|---:|---:|---:|---:|
+| dev | 37 | 19 | 310,567.23 | 18 | 4,000,221.22 |
+| primary | 25 | 15 | 898,027.62 | 10 | 2,400,112.44 |
+| stress | 43 | 27 | 802,579.12 | 16 | 4,000,171.16 |
+
+**The two totals are never added together.** A control break is money that does
+not tie out. An abstention is money that arrived and has not been attributed to
+the right refund event -- unallocated, not missing. One combined figure would
+report the second as a loss, and here it is the larger of the two, so the total
+would be dominated by the part that is not actually gone.
+
+The queue is ranked by **exposure**: the money behind each break, measured per
+category rather than uniformly, because the categories are not commensurable. A
+fee variance is worth the size of the variance; an uncredited settlement is
+worth the whole settlement; a double credit is worth only the surplus that has
+to go back. Each measure is stated at the point it is computed. Exposure zero
+means the released files do not *size* the break -- a settlement with no summary
+row is the clear case -- and those sort last, because inventing a figure to rank
+one by would put a fabricated amount at the top of somebody's morning.
+
+Two things are deliberately **not** in the list. `NO_ACTION` cases never appear:
+those are `CREATED` and `FAILED` payments that were never going to settle and
+are owed to nobody, and padding the list with them is a false positive the
+scorer measures by name. Neither does a reconciled case carrying only a
+duplicate-export warning, because the roll-up already used the deduplicated set
+and no money moved.
+
+### Classifying them, and what that is worth knowing
+
+Precision and recall per category, from `make report`, on the same scorer that
+produces every other number here:
+
+| category | dev | primary | stress |
+|---|---|---|---|
+| BANK_CREDIT_DUPLICATE | 1.00 / 1.00 (3) | 1.00 / 1.00 (2) | 1.00 / 1.00 (5) |
+| BANK_CREDIT_MISSING | 1.00 / 1.00 (4) | 1.00 / 1.00 (3) | 1.00 / 1.00 (7) |
+| CAPTURED_UNSETTLED | 1.00 / 1.00 (6) | 1.00 / 1.00 (6) | 1.00 / 1.00 (7) |
+| FEE_TAX_VARIANCE | 1.00 / 1.00 (6) | 1.00 / 1.00 (4) | 1.00 / 1.00 (8) |
+
+`NO_ACTION` false positives: **0/5, 0/6, 0/3**. The confusion matrix is diagonal
+in all three families.
+
+That looks better than it is, and the reason should be stated rather than
+defended when asked. Each of these categories is decided by a **control equation
+that either holds or does not** -- a missing bank row, a second credit against
+one UTR, a fee that disagrees with the rate card. There is no judgement in any
+of them, so a perfect score is what a correct implementation is *supposed* to
+produce; it measures that the equations are right, not that classification is
+hard. The hard part of this dataset is attribution, and that is scored
+separately, as a false-match rate and as the abstentions in the table above.
+
+One number in the ranking is an artifact and is called out here rather than left
+to be discovered. The refund scenarios draw their amounts from fixed bases in
+the generator, because those classes need amounts provably disjoint from every
+other refund for the cardinality argument to hold. So every `AMBIGUOUS_REFUND`
+row lands within a few paise of every other one, and the ranking separates the
+categories from each other -- the comparison an operator makes first -- while
+separating almost nothing *within* the refund class. The mechanism is the
+deliverable; the specific rupee magnitudes of those rows are a property of how
+the benchmark had to be built.
+
 ## Audit trail
 
 Every decision records what it saw, which rule fired, what it concluded, with
@@ -466,6 +536,7 @@ src/recon/match/
   controller.py         the pipeline, per-pass yield, per-gate eliminations
   audit.py              hash-chained decision log + human override layer
   journal.py            turns a finished run into that log
+  exceptions.py         the operator queue, ranked by exposure
 src/recon/metrics/
   score.py              one scorer, used by both the agent and the baselines
   baselines.py          B1, B2, B3 and the lexical hit-rate measurement
@@ -489,7 +560,8 @@ defective case did not occur in seed 42.
 CI re-runs the answer-key suite, regenerates all three datasets and fails if a
 single byte differs from the committed CSVs, re-derives every published baseline
 and the agent's score on a machine that is not the author's, verifies the audit
-chain, and fails the build if the generated README table above has gone stale.
+chain, builds the exception queue, and fails the build if the generated README
+table above has gone stale.
 The intent is that no number in this repo has to be taken on the author's word.
 
 ## Honest limitation

@@ -1,4 +1,4 @@
-.PHONY: help install data data-large test baseline agent adjudicate report ambiguity audit stats verify verify-audit clean
+.PHONY: help install data data-large test baseline agent adjudicate report ambiguity audit exceptions stats verify verify-audit clean
 
 # Prefer the project venv when one exists. The bare `python3` on PATH is not
 # the interpreter this project's dependencies are installed into on every
@@ -45,8 +45,9 @@ help:
 	@echo "make ambiguity  report candidate ambiguity before and after the gates"
 	@echo "make stats      regenerate the README dataset table from data/"
 	@echo "make audit      write a decision journal per family to runs/"
+	@echo "make exceptions write the operator queue per family to runs/"
 	@echo "make verify-audit  re-verify the tamper-evident hash chain of every audit log"
-	@echo "make verify     test + baseline + report + ambiguity + audit chain + stats"
+	@echo "make verify     test + baseline + report + ambiguity + audit chain + exceptions + stats"
 	@echo "make clean      remove generated data"
 
 install:
@@ -103,6 +104,13 @@ ambiguity:
 audit:
 	@$(PYTHON) -m recon.match.controller data/dev data/primary data/stress --audit-dir runs
 
+# The exceptions the agent could not resolve, ranked by the money behind
+# them. Rule 4 of this project is that unmatched rows are never hidden, and
+# this is the artifact that discharges it: a file an operator works through,
+# not a count in a report.
+exceptions:
+	@$(PYTHON) -m recon.match.exceptions data/dev data/primary data/stress --out-dir runs
+
 stats:
 	@$(PYTHON) tools/refresh_stats.py
 
@@ -119,7 +127,7 @@ stats:
 verify-audit:
 	@$(PYTHON) -m recon.match.audit runs
 
-verify: test baseline report ambiguity audit verify-audit stats
+verify: test baseline report ambiguity audit exceptions verify-audit stats
 
 clean:
 	@rm -rf data/dev data/primary data/stress data/large runs
