@@ -4,8 +4,22 @@
 # the interpreter this project's dependencies are installed into on every
 # machine, and a `make verify` that cannot run is worse than no target at all --
 # it reports a broken toolchain as a broken project.
-VENV_PYTHON := $(wildcard .venv/Scripts/python.exe) $(wildcard .venv/bin/python)
-PYTHON  ?= $(if $(VENV_PYTHON),$(firstword $(VENV_PYTHON)),python3)
+#
+# $(wildcard) over BOTH candidates in ONE call, then $(firstword): the earlier
+# form was two separate $(wildcard) calls joined by a literal space, so on a
+# machine with no .venv -- every CI runner -- it expanded to a string that was
+# whitespace rather than empty. $(if) strips its literal argument text, not the
+# result of expanding it, so that whitespace tested TRUE, $(firstword) of it was
+# empty, and PYTHON became empty. `@$(PYTHON) -m pytest` then expanded to
+# `@ -m pytest`, in which make reads the leading `-` as the ignore-errors recipe
+# prefix: the step ran `m`, failed, and was reported as a SUCCESS. A test target
+# that passes without running the tests is the dangerous half of that bug, so
+# the guard below refuses to build rather than let it happen again.
+VENV_PYTHON := $(firstword $(wildcard .venv/bin/python .venv/Scripts/python.exe))
+PYTHON ?= $(if $(strip $(VENV_PYTHON)),$(VENV_PYTHON),python3)
+ifeq ($(strip $(PYTHON)),)
+$(error PYTHON resolved to an empty string -- refusing to run recipes that would silently succeed)
+endif
 export PYTHONPATH := src
 
 RECORDS      ?= 500
