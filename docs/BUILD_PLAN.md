@@ -146,7 +146,7 @@ remains.
 | E — adjudicator | ✅ complete, off by default |
 | G — exception list | ✅ complete |
 | H — abstention curve | ✅ complete (unplanned defect found) |
-| F — surface | 🟡 demo built; holdout run and pitch video outstanding |
+| F — surface | 🟡 demo built, holdout run; pitch video outstanding |
 
 
 ### Phase A — data integrity (24 Aug, half a day)
@@ -385,8 +385,36 @@ Money is formatted from integer paise with `divmod` and manual grouping rather
 than by dividing by 100 — the presentation boundary is exactly where the habit
 of keeping money off floats is usually dropped.
 
-Still outstanding: the holdout run (**once**, and whatever it says gets
-reported, not re-tuned) and the pitch video.
+### The holdout — run, and what it actually established
+
+Pre-registered in `tools/holdout.py`, committed before the run so the commit
+order is the evidence. Five contiguous unseen seeds (70001–70005), primary mix,
+frozen ladder, once. Full record in [`HOLDOUT.md`](HOLDOUT.md).
+
+**94/100 on all five, 0.00% false matches, 1.0000 allocation precision** —
+identical to the published primary figure, so nothing was fitted to the batches
+in `data/`.
+
+The result needed interrogating rather than celebrating, and the interrogation
+is the part worth keeping. Five identical scores is not five agreeing draws:
+`PRIMARY_CASE_SHARES` is a fixed partition of 100 cases, so every seed carries
+exactly 6 `DESCRIBED_REFUND` cases and the agent abstains on all six. 94 is
+100 − 6 by construction, on any seed. Reporting the constancy as stability would
+have been reading a structural identity as a measurement.
+
+What did move is the better finding: **D against B2 ranged 8.0% to 13.0% while
+the agent's score, false-match rate and allocation precision did not move at
+all.** Across five unseen batches every bit of seed-to-seed variance sat in the
+guesser and none in the prover. The honest headroom figure is a range, +2 to +7
+cases, rather than the single number either committed family happens to show.
+
+A consequence worth carrying into any future benchmark work: a fixed scenario
+partition makes the headline number insensitive to the seed by design, so seed
+variation cannot be the instrument for measuring generalisation here. What the
+holdout can still establish — and did — is that precision and the false-match
+rate survive contact with data the tolerances were never near.
+
+Still outstanding: the pitch video.
 
 The tamper-evident audit chain has landed: `record_hash =
 SHA256(previous_hash + canonical_json(complete record))`, verified on read, with
