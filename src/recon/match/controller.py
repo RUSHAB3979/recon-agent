@@ -276,16 +276,48 @@ def _disposition_without_settlement(
     )
 
 
+@dataclass(frozen=True)
+class LadderIndex:
+    """The whole-run views ``_verdict`` needs, built once for the whole run.
+
+    Each of these is a fold over every claim or abstention in the batch, and
+    ``_verdict`` used to call all four itself -- once per case. That is O(cases x
+    claims), and it does not look like a bottleneck at 100 cases: at 500 records
+    the pipeline runs in 22ms and the published throughput figure came from
+    exactly there. Profiled at 8,000 records, ``claims_by_settlement`` and
+    ``attributed_detail_ids`` were more than half the runtime, and end to end
+    the collapse was 48k records/sec at 500 down to 1.3k at 20,000.
+
+    Passing the index in rather than caching it on ``LadderRun`` is deliberate:
+    a cache makes the repeated call cheap, while this makes it impossible. The
+    cost is visible at the one call site that pays it.
+    """
+
+    attributed: frozenset[str]
+    claims_by_settlement: Mapping[str, tuple[Claim, ...]]
+    abstentions_by_settlement: Mapping[str, tuple[str, ...]]
+    abstained_lines_by_settlement: Mapping[str, tuple[str, ...]]
+
+    @classmethod
+    def build(cls, ladder: LadderRun) -> "LadderIndex":
+        return cls(
+            attributed=ladder.attributed_detail_ids,
+            claims_by_settlement=ladder.claims_by_settlement(),
+            abstentions_by_settlement=ladder.abstentions_by_settlement(),
+            abstained_lines_by_settlement=ladder.abstained_lines_by_settlement(),
+        )
+
+
 def _verdict(
     batch: Batch,
     case: CaseUnit,
-    ladder: LadderRun,
+    index: LadderIndex,
     lines: Mapping[str, DetailLine],
 ) -> Verdict:
-    attributed = ladder.attributed_detail_ids
-    claims_by_settlement = ladder.claims_by_settlement()
-    abstentions_by_settlement = ladder.abstentions_by_settlement()
-    abstained_lines_by_settlement = ladder.abstained_lines_by_settlement()
+    attributed = index.attributed
+    claims_by_settlement = index.claims_by_settlement
+    abstentions_by_settlement = index.abstentions_by_settlement
+    abstained_lines_by_settlement = index.abstained_lines_by_settlement
 
     allocations: set[tuple[str, str]] = set()
     claim_confidences: list[float] = []
@@ -443,7 +475,8 @@ def reconcile(
     # Built once, not per case: a lookup rebuilt inside the loop would turn the
     # disposition step quadratic for no gain.
     lines = {line.detail_id: line for line in batch.details}
-    verdicts = tuple(_verdict(batch, case, ladder_run, lines) for case in cases)
+    index = LadderIndex.build(ladder_run)
+    verdicts = tuple(_verdict(batch, case, index, lines) for case in cases)
     elapsed = time.perf_counter() - started
     return RunResult(
         verdicts=verdicts,

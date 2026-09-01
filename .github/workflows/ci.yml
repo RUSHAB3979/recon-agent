@@ -70,6 +70,15 @@ jobs:
       - name: Exception queue
         run: make exceptions
 
+      # The adversarial suite is the one that fails when somebody "helpfully"
+      # relaxes the money parser or the timezone guard to make a real file load.
+      # It runs with the slow scaling check included, because a complexity
+      # regression is exactly the kind of thing that only shows up in CI.
+      - name: Adversarial and robustness suite
+        run: python -m pytest tests/test_adversarial.py -q
+        env:
+          PYTHONPATH: src
+
       # The demo surface is generated from a run, so it can break the way code
       # breaks. Building it here means a judge is never the first person to
       # find that out, and the uploaded artifact is the page itself rather

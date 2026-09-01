@@ -656,6 +656,7 @@ tools/refresh_stats.py  regenerates the README table from data/
 docs/DATA_SPEC.md       schema, scenario classes, guarantees, limitations
 docs/BUILD_PLAN.md      phase status and what is deliberately not built
 docs/HOLDOUT.md         the pre-registered holdout run and its honest reading
+docs/ADVERSARIAL_REVIEW.md  hostile pass: six findings, five fixed, one measured
 docs/superpowers/specs/ the authoritative benchmark design record
 data/dev/               development family (the only tuning surface)
 data/primary/           headline batch      (never tune here)
@@ -673,6 +674,43 @@ and the agent's score on a machine that is not the author's, verifies the audit
 chain, builds the exception queue, and fails the build if the generated README
 table above has gone stale.
 The intent is that no number in this repo has to be taken on the author's word.
+
+## What happens at volume, and what happens to a hostile file
+
+An adversarial pass over the submission is written up in
+[`docs/ADVERSARIAL_REVIEW.md`](docs/ADVERSARIAL_REVIEW.md), and every finding in
+it is reproduced by a test in `tests/test_adversarial.py` that was written
+before the fix and failed. The two worth knowing before you read anything else:
+
+**The exception queue is opened in Excel, so it could carry a formula.** Cells
+beginning `=`, `+`, `-` or `@` are executed by every spreadsheet. In production
+that file's evidence column carries bank narration and gateway payment
+descriptions — text a paying customer chooses. Affected cells are now made inert
+without being made unreadable, and a test asserts ordinary rows are written
+byte-identical.
+
+**Throughput was measured at the batch size where it looks best.** It is not a
+constant:
+
+| records | before | after |
+|---:|---:|---:|
+| 500 | 47,926/s | 67,183/s |
+| 2,000 | 18,184/s | 60,803/s |
+| 8,000 | 3,737/s | 32,356/s |
+| 20,000 | 1,303/s | **15,093/s** |
+| 50,000 | — | 5,245/s |
+
+Two accidental quadratics caused most of that — whole-batch folds recomputed
+inside per-case and per-candidate loops, neither of them in the nine-gate solver
+— and both are fixed, with the regression pinned as a property rather than a
+wall-clock bound. Every accuracy figure above is unchanged.
+
+What remains is **inherent**: gate 8 decides global feasibility by forcing each
+candidate pairing and re-solving the residual assignment problem, which is what
+makes it a proof rather than a ranking, and it costs a matching per candidate.
+The engine is comfortable to roughly 20,000 records per batch and degrades
+quadratically above that. That ceiling is stated here rather than discovered by
+a reviewer.
 
 ## Honest limitation
 
