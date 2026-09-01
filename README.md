@@ -689,28 +689,36 @@ descriptions — text a paying customer chooses. Affected cells are now made ine
 without being made unreadable, and a test asserts ordinary rows are written
 byte-identical.
 
-**Throughput was measured at the batch size where it looks best.** It is not a
-constant:
+**Throughput was measured at the batch size where it looks best.** It was not a
+constant — 500 records ran at 47,926/s and 20,000 at 1,303/s, a 37× collapse
+over a 40× increase in size. Three causes, none of them in the nine-gate solver
+where you would look first:
 
-| records | before | after |
+| records | originally | now |
 |---:|---:|---:|
-| 500 | 47,926/s | 67,183/s |
-| 2,000 | 18,184/s | 60,803/s |
-| 8,000 | 3,737/s | 32,356/s |
-| 20,000 | 1,303/s | **15,093/s** |
-| 50,000 | — | 5,245/s |
+| 500 | 47,926/s | 68,656/s |
+| 2,000 | 18,184/s | 69,454/s |
+| 8,000 | 3,737/s | 63,016/s |
+| 20,000 | 1,303/s | **56,307/s** |
+| 50,000 | — | 49,397/s |
+| 100,000 | — | 46,761/s |
 
-Two accidental quadratics caused most of that — whole-batch folds recomputed
-inside per-case and per-candidate loops, neither of them in the nine-gate solver
-— and both are fixed, with the regression pinned as a property rather than a
-wall-clock bound. Every accuracy figure above is unchanged.
+Two were whole-batch folds recomputed inside per-case and per-candidate loops.
+The third was gate 8: it decides global feasibility by forcing each candidate
+pairing and re-solving the residual assignment problem, and it was re-solving
+the **whole batch's** matching every time. The candidate graph decomposes into
+independent amount-collision clusters, and a maximum matching of a disconnected
+graph is the sum over its components — so forcing an edge perturbs only its own
+cluster, and the gate can be asked the same question about two or three nodes
+instead of forty thousand. That is exact, not an approximation, and three tests
+pin the reasoning rather than only the result.
 
-What remains is **inherent**: gate 8 decides global feasibility by forcing each
-candidate pairing and re-solving the residual assignment problem, which is what
-makes it a proof rather than a ranking, and it costs a matching per candidate.
-The engine is comfortable to roughly 20,000 records per batch and degrades
-quadratically above that. That ceiling is stated here rather than discovered by
-a reviewer.
+**Proved identical, not assumed.** A fingerprint of every verdict, claim reason,
+abstention, per-gate counter and audit chain head, across twelve datasets —
+three committed families plus three families × three unseen seeds — hashes the
+same before and after the change. Scaling exponents between adjacent sizes are
+now 1.00, 1.07, 1.12, 1.14, 1.08: linear, and no longer climbing.
+
 
 ## Honest limitation
 

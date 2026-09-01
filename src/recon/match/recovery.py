@@ -92,6 +92,7 @@ THE WINDOW IS A DECLARED POLICY, NOT A LEARNED THRESHOLD
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -211,6 +212,137 @@ def maximum_matching(
     return matched
 
 
+@dataclass(frozen=True)
+class CandidateGraph:
+    """The candidate graph, split into the pieces gate 8 can reason about alone.
+
+    WHY THIS EXISTS
+
+        Gate 8 asks, for every candidate edge, whether some globally consistent
+        assignment uses it -- by forcing the edge, removing both endpoints and
+        re-solving the residual. Done against the whole graph that is a fresh
+        Kuhn run per candidate, each preceded by a full copy of the adjacency:
+        measured at 20,000 records it was 1,841 matching runs and the largest
+        cost in the pipeline, with the scaling exponent reaching 2.15 by 50,000.
+
+    WHY SPLITTING IS EXACT AND NOT AN APPROXIMATION
+
+        A maximum matching of a disconnected graph is the union of maximum
+        matchings of its components, so its size is the sum of theirs. Forcing
+        an edge and deleting its two endpoints changes only the component that
+        edge lives in; every other component still contributes exactly its own
+        baseline. So
+
+            total residual == baseline - 1
+                <=>  residual within this component == that component's baseline - 1
+
+        and the second question is the one worth asking, because these
+        components are amount-collision clusters -- in practice two or three
+        nodes, never the whole batch. The gate's verdict is unchanged, edge for
+        edge; only the graph it is asked about shrinks.
+
+        ``test_the_component_baselines_sum_to_the_global_baseline`` pins the
+        premise, so if the decomposition ever stops being a decomposition the
+        arithmetic above fails loudly rather than quietly admitting a candidate.
+    """
+
+    adjacency: Mapping[str, list[str]]
+    right_nodes: frozenset[str]
+    baseline: int
+    _component_of: Mapping[str, int]
+    _adjacency_of: tuple[Mapping[str, list[str]], ...]
+    _right_of: tuple[frozenset[str], ...]
+    _baseline_of: tuple[int, ...]
+
+    @classmethod
+    def build(
+        cls, adjacency: Mapping[str, list[str]], right_nodes: frozenset[str]
+    ) -> "CandidateGraph":
+        # The inverse edge list, built once. Walking components needs "which
+        # lines name this event", and answering that by re-scanning every line
+        # would put an O(lines) loop inside the walk -- the same shape of bug
+        # this class exists to remove, reintroduced one level down.
+        lines_naming: dict[str, list[str]] = {}
+        for left in sorted(adjacency):
+            for right in adjacency[left]:
+                if right in right_nodes:
+                    lines_naming.setdefault(right, []).append(left)
+
+        # Connected components over the bipartite graph, walked from each left
+        # node. Component numbering has no effect on any verdict; the sorted
+        # iteration is so that a dump of intermediate state is readable when
+        # something does go wrong.
+        component_of: dict[str, int] = {}
+        groups: list[list[str]] = []
+        seen_right: set[str] = set()
+
+        for start in sorted(adjacency):
+            if start in component_of:
+                continue
+            index = len(groups)
+            members = [start]
+            component_of[start] = index
+            queue = [start]
+            while queue:
+                left = queue.pop()
+                for right in adjacency.get(left, ()):
+                    if right not in right_nodes or right in seen_right:
+                        continue
+                    seen_right.add(right)
+                    for other in lines_naming.get(right, ()):
+                        if other in component_of:
+                            continue
+                        component_of[other] = index
+                        members.append(other)
+                        queue.append(other)
+            groups.append(sorted(members))
+
+        adjacency_of: list[Mapping[str, list[str]]] = []
+        right_of: list[frozenset[str]] = []
+        baseline_of: list[int] = []
+        for members in groups:
+            local = {left: list(adjacency.get(left, ())) for left in members}
+            local_right = frozenset(
+                right for candidates in local.values() for right in candidates
+            ) & right_nodes
+            adjacency_of.append(local)
+            right_of.append(local_right)
+            baseline_of.append(len(maximum_matching(local, local_right)))
+
+        return cls(
+            adjacency=adjacency,
+            right_nodes=right_nodes,
+            baseline=sum(baseline_of),
+            _component_of=component_of,
+            _adjacency_of=tuple(adjacency_of),
+            _right_of=tuple(right_of),
+            _baseline_of=tuple(baseline_of),
+        )
+
+    @property
+    def component_count(self) -> int:
+        """How many independent clusters the candidate graph fell into.
+
+        Reported because it is the number that explains the speed: gate 8 costs
+        a matching over one cluster rather than over the batch, so a run whose
+        graph does not decompose would be as slow as the old one and this is
+        where that would show.
+        """
+        return len(self._baseline_of)
+
+    def residual_reaches_baseline(self, detail_id: str, event_id: str) -> bool:
+        """Force this edge, drop both endpoints, and re-solve -- inside one component."""
+        index = self._component_of[detail_id]
+        local = self._adjacency_of[index]
+        residual = {
+            other_id: [candidate for candidate in candidates if candidate != event_id]
+            for other_id, candidates in local.items()
+            if other_id != detail_id
+        }
+        remaining = self._right_of[index] - {event_id}
+        return len(maximum_matching(residual, remaining)) == self._baseline_of[index] - 1
+
+
 # --------------------------------------------------------------------------
 # the pass
 # --------------------------------------------------------------------------
@@ -233,6 +365,7 @@ class RefundCorroborationPass:
 
     def __init__(self, window_days: int = RECOVERY_WINDOW_DAYS) -> None:
         self.window_days = window_days
+        self.last_graph: CandidateGraph | None = None
         self.ledger = GateLedger()
 
     # ---- local gates
@@ -349,7 +482,10 @@ class RefundCorroborationPass:
                 event_by_id[event.event_id] = event
 
         right_nodes = frozenset(event_by_id)
-        baseline = len(maximum_matching(adjacency, right_nodes))
+        graph = CandidateGraph.build(adjacency, right_nodes)
+        # Retained like the ledger, so the decomposition can be inspected after
+        # a run rather than only trusted during one.
+        self.last_graph = graph
 
         for detail_id, candidate_ids in sorted(adjacency.items()):
             line = line_by_id[detail_id]
@@ -365,7 +501,7 @@ class RefundCorroborationPass:
                 event_id
                 for event_id in candidate_ids
                 if self._survives_global_feasibility(
-                    adjacency, right_nodes, detail_id, event_id, baseline, ledger
+                    graph, detail_id, event_id, ledger
                 )
             ]
 
@@ -421,11 +557,9 @@ class RefundCorroborationPass:
 
     def _survives_global_feasibility(
         self,
-        adjacency: dict[str, list[str]],
-        right_nodes: frozenset[str],
+        graph: CandidateGraph,
         detail_id: str,
         event_id: str,
-        baseline: int,
         ledger: GateLedger,
     ) -> bool:
         """Gate 8: is there a globally consistent assignment using this pairing?
@@ -442,16 +576,12 @@ class RefundCorroborationPass:
         This is deliberately not the forbid-the-edge question -- delete the edge,
         keep both endpoints, re-solve -- which tests membership in EVERY maximum
         assignment rather than in some, and would discard admissible candidates.
+
+        The residual is re-solved within this edge's connected component rather
+        than over the whole batch. See :class:`CandidateGraph` for why that is
+        the same question and not a cheaper approximation of it.
         """
-        residual = {
-            other_id: [
-                candidate for candidate in candidates if candidate != event_id
-            ]
-            for other_id, candidates in adjacency.items()
-            if other_id != detail_id
-        }
-        remaining = right_nodes - {event_id}
-        if len(maximum_matching(residual, remaining)) == baseline - 1:
+        if graph.residual_reaches_baseline(detail_id, event_id):
             return True
         ledger.record(Gate.GLOBAL_FEASIBILITY)
         return False

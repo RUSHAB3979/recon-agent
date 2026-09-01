@@ -3,8 +3,7 @@
 A hostile pass over the submission, run on 2026-09-01: not "does the benchmark
 score well" but "what does this do when the input did not come from its own
 generator, and what would a reviewer who is not on your side find in ten
-minutes". Six findings, five fixed, one measured and left standing with its
-cause named.
+minutes". Six findings, all six fixed.
 
 Every finding is reproduced by a test in `tests/test_adversarial.py`, which was
 written **before** the fixes and failed on all six. That file is the finding
@@ -14,10 +13,10 @@ list; this document is why each one matters.
 |---|---|---|---|
 | 1 | CSV injection in the operator queue | **high** | fixed |
 | 2 | Timezone offsets accepted, then silently dropped | **high** | fixed |
-| 3 | Throughput collapses with batch size | **high** | two causes fixed; a third measured |
+| 3 | Throughput collapses with batch size | **high** | fixed (three causes) |
 | 4 | Money parser accepts shapes it never decided to | medium | fixed |
 | 5 | Excel's BOM reported as a missing column | low | fixed |
-| 6 | Gate 8 re-solves a matching per candidate | — | **not fixed**; measured and named below |
+| 6 | Gate 8 re-solves a matching per candidate | **high** | fixed; results proved identical |
 
 ---
 
@@ -108,6 +107,9 @@ indexes are built a bounded number of times per run, not once per case. A timing
 assertion would be flaky on a shared runner; this one fails only on the thing
 that was actually wrong.
 
+A third cost dominated once these two were gone -- gate 8 itself. That is
+finding 6, and the final figures are there rather than here.
+
 ## 4. The money parser accepted shapes it never decided to — medium
 
 `int()` is more generous than "integer paise". It takes PEP 515 underscores
@@ -135,27 +137,63 @@ loader reported `missing column(s) bank_row_id` — sending somebody to look for
 schema problem that does not exist, over a file that is entirely fine. One word:
 `utf-8-sig`. CRLF endings were already handled and now have a test saying so.
 
-## 6. Gate 8 re-solves a bipartite matching per candidate — not fixed
+## 6. Gate 8 re-solved a bipartite matching per candidate — high, fixed
 
-After the two accidental quadratics were removed, the dominant cost is the
-global-feasibility gate: `maximum_matching` and `augment`, 1,841 calls at 20,000
-records, each rebuilding the adjacency graph. The scaling exponent still climbs
-with size — roughly 1.1 between 500 and 2,000, and 2.15 between 20,000 and
-50,000.
+With the accidental quadratics gone, the dominant cost was the gate that
+underwrites the false-match rate. Gate 8 asks, for each candidate edge, whether
+*some* globally consistent assignment uses it — by forcing the edge, deleting
+both endpoints and re-solving. Against the whole graph that is a fresh Kuhn run
+per candidate, each preceded by a full copy of the adjacency: 1,841 matching
+runs at 20,000 records, with the scaling exponent reaching 2.15 by 50,000.
 
-This one is **inherent to the design as written**, not an oversight: gate 8
-decides feasibility by forcing each candidate pairing and re-solving the
-residual assignment problem, which is what makes it a proof rather than a
-ranking. Making it incremental — reusing the base matching across candidates —
-is real work with real risk of changing results, and it is not something to
-attempt days before a deadline on the one gate that underwrites the
-false-match rate.
+This was initially left unfixed and published as a ceiling, on the grounds that
+making it incremental risked changing results on the one gate that must not
+change. That was the right caution and the wrong conclusion: there is a fix that
+is **exact by construction** rather than clever.
 
-So it is reported rather than hidden: **the engine is comfortable to about
-20,000 records per batch and degrades quadratically above that.** Settlement
-batches are per-cycle, and a cycle of 20,000 payments is a substantial merchant,
-so this is a real ceiling rather than an urgent one — but it is a ceiling, and a
-reviewer should hear it from the submission rather than find it.
+**The candidate graph decomposes.** A maximum matching of a disconnected graph
+is the union of maximum matchings of its components, so its size is the sum of
+theirs. Forcing an edge and deleting its endpoints changes only the component
+that edge lives in; every other component still contributes exactly its own
+baseline. So
+
+```
+total residual == baseline - 1
+    <=>  residual within this component == that component's baseline - 1
+```
+
+and the second question is the cheap one, because these components are
+amount-collision clusters — two or three nodes in practice, never the batch.
+The gate's verdict is unchanged edge for edge; only the graph it is asked about
+shrinks. Building the components needs "which lines name this event", and
+answering that by rescanning every line would have reintroduced the same bug one
+level down, so the inverse edge list is built once.
+
+**Proved, not asserted.** A fingerprint of every verdict, every claim reason,
+every abstention, every per-gate counter and the audit chain head, over the three
+committed families plus three families × three unseen seeds — twelve datasets —
+hashes to `5314b78d40c6a260…` before the change and to `5314b78d40c6a260…`
+after. Three tests pin the reasoning as well as the result: the component
+baselines sum to the global baseline on hand-built graphs including a chain that
+must *not* split, the same identity holds on the graphs real batches produce,
+and forcing each edge gives the same answer component-wise as whole-graph.
+
+| records | originally | now | speedup |
+|---:|---:|---:|---:|
+| 500 | 0.022 s · 47,926/s | 0.015 s · 68,656/s | 1.5× |
+| 2,000 | 0.230 s · 18,184/s | 0.060 s · 69,454/s | 3.8× |
+| 8,000 | 4.466 s · 3,737/s | 0.265 s · 63,016/s | 16.9× |
+| 20,000 | 31.939 s · 1,303/s | **0.739 s · 56,307/s** | **43×** |
+| 50,000 | — | 2.106 s · 49,397/s | — |
+| 100,000 | — | 4.452 s · 46,761/s | — |
+
+Scaling exponents between adjacent sizes: 1.00, 1.07, 1.12, 1.14, 1.08. The
+curve is linear and has stopped climbing, which is the part that matters — the
+old one reached 2.15 and was still rising. The ceiling this document previously
+reported at 20,000 records per batch is gone; 100,000 records reconcile in four
+and a half seconds.
+
+---
 
 ---
 
