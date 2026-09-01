@@ -326,6 +326,13 @@ What is there instead is smaller and does exactly one thing the gates cannot:
   arithmetic in the input.
 - Confidence below a declared floor is recorded as a decline, and declining is
   always available.
+- **The sealed record names the reader.** A model-made claim journals as
+  `adjudication/SUGGESTED by <model>`; a decline the rung reaches on its own
+  rules -- no note, or no call budget -- names nobody, because no reader saw it.
+  Added late, after noticing that confidence and reasoning were in the chain and
+  the actor was not: a swap of the default model would have left the log unable
+  to say which attributions the old one made. Deterministic claims pass no
+  decider, so every published log is byte-identical at a fixed timestamp.
 
 Tiered routing survives in the sense that the model is a constructor argument;
 the default is Haiku 4.5, because the task is a two-way reading comprehension

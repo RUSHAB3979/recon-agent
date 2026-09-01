@@ -336,3 +336,106 @@ def test_the_verifier_fails_when_there_is_nothing_to_verify(tmp_path, capsys):
 
     assert main([str(tmp_path / "absent")]) == 1
     assert "no audit logs found" in capsys.readouterr().out
+
+
+# --------------------------------------------------------------------------
+# who decided
+# --------------------------------------------------------------------------
+
+
+class _NamedReader:
+    """A reader with an identity, answering or declining on demand."""
+
+    def __init__(self, model: str, *, answer: bool) -> None:
+        self.model = model
+        self._answer = answer
+
+    def read(self, request):
+        from recon.match.adjudicator import Adjudication, Usage
+
+        return Adjudication(
+            detail_id=request.detail_id,
+            label=request.candidates[0].label if self._answer else None,
+            confidence=0.88 if self._answer else 0.0,
+            reasoning="the note names the product" if self._answer else "not separable",
+            model=self.model,
+            usage=Usage(calls=1),
+        )
+
+
+def _adjudicated(directory, reader):
+    from recon.match.adjudicator import AdjudicationPass
+    from recon.match.passes import DEFAULT_LADDER
+
+    run = reconcile(directory, (*DEFAULT_LADDER, AdjudicationPass(reader)))
+    return build_journal(run, built_at=PINNED)
+
+
+def test_a_model_backed_claim_names_its_reader(directory):
+    """Confidence and reasoning are not enough to attribute a decision.
+
+    A sealed record reading "confidence 0.88, because the note names the
+    product" says what was concluded but not whose judgement it was. Swap the
+    model and the log cannot answer which attributions the old one made, which
+    is the first question anyone asks after a bad batch.
+    """
+    log = _adjudicated(directory, _NamedReader("test-model-1", answer=True))
+    claims = [
+        decision
+        for decision in log.by_stage(STAGE_BY_PASS["adjudication"])
+        if decision.action == "match"
+    ]
+    assert claims
+    assert all(decision.rule.endswith(" by test-model-1") for decision in claims)
+
+
+def test_a_model_backed_decline_names_its_reader_too(directory):
+    """The half that stays unresolved is the half that most needs attributing.
+
+    A decline is a decision, and a costed one when a model made it. Recording
+    the actor on the claim but not on the refusal would leave the exception
+    queue full of items nobody can trace back to what produced them.
+    """
+    log = _adjudicated(directory, _NamedReader("test-model-2", answer=False))
+    declines = [
+        decision
+        for decision in log.by_stage(STAGE_BY_PASS["adjudication"])
+        if decision.action == "abstain" and "adjudicator declined" in decision.reasoning
+    ]
+    assert declines
+    assert all(decision.rule.endswith(" by test-model-2") for decision in declines)
+
+
+def test_a_decline_the_reader_never_saw_names_nobody(directory):
+    """The rung's own rules are not the model's decisions.
+
+    Lines with no note, and lines past the call budget, are declined by this
+    code without a reader being consulted. Putting a model's name on those
+    would be the reporting error this whole field exists to prevent, pointed
+    the other way.
+    """
+    from recon.match.adjudicator import AdjudicationPass
+    from recon.match.passes import DEFAULT_LADDER
+
+    reader = _NamedReader("test-model-3", answer=True)
+    run = reconcile(
+        directory, (*DEFAULT_LADDER, AdjudicationPass(reader, max_calls=1))
+    )
+    log = build_journal(run, built_at=PINNED)
+    budget = [
+        decision
+        for decision in log.by_stage(STAGE_BY_PASS["adjudication"])
+        if "call budget exhausted" in decision.reasoning
+    ]
+    assert budget
+    assert all("test-model-3" not in decision.rule for decision in budget)
+
+
+def test_deterministic_records_name_no_decider(log):
+    """The pass name IS the actor for every rule this code decides itself.
+
+    This is also what keeps the published logs byte-identical: a deterministic
+    claim passes no decider, so its rule -- and therefore its record hash --
+    is exactly what it was before the field existed.
+    """
+    assert all(" by " not in decision.rule for decision in log.decisions)
