@@ -224,7 +224,12 @@ class DecliningReader:
     residual; it cannot silently move anything else.
     """
 
-    model = "none"
+    # Named rather than blank, because this identity is written into the sealed
+    # audit record like any other reader's. A record whose decider is empty is
+    # ambiguous between "nothing read this" and "the field was never filled in";
+    # "no-reader" says which. It is absent from PRICING, so it also costs
+    # nothing, which is the other true thing about it.
+    model = "no-reader"
 
     def read(self, request: AdjudicationRequest) -> Adjudication:
         return Adjudication(
@@ -576,6 +581,10 @@ class AdjudicationPass:
 
             request = build_request(batch, line, available)
             if request is None or not request.note:
+                # No reader was consulted, so none is named. These two declines
+                # are this rung's own rules firing -- there is nothing to read,
+                # or there is no budget left to read it with -- and attributing
+                # them to a model would put its name on a decision it never saw.
                 result.abstentions.append(
                     _declined(abstention, "no semantic evidence on the line")
                 )
@@ -595,7 +604,11 @@ class AdjudicationPass:
             claim = self._to_claim(request, verdict, line)
             if claim is None:
                 result.abstentions.append(
-                    _declined(abstention, _decline_reason(request, verdict, self.min_confidence))
+                    _declined(
+                        abstention,
+                        _decline_reason(request, verdict, self.min_confidence),
+                        decided_by=verdict.model or None,
+                    )
                 )
                 continue
             result.claims.append(claim)
@@ -641,19 +654,27 @@ class AdjudicationPass:
             tier=ClaimTier.SUGGESTED,
             confidence=verdict.confidence,
             reasons=(f"adjudicated on note evidence: {verdict.reasoning}",),
+            # The reader that actually decided, carried into the sealed record.
+            # ``verdict.model`` rather than ``self.reader.model`` so that a
+            # reader which routes between models reports the one that answered
+            # this line, not the one it was constructed with.
+            decided_by=verdict.model or None,
         )
 
     def cost_usd(self) -> Decimal:
         return self.usage.cost_usd(self.reader.model)
 
 
-def _declined(abstention: Abstention, reason: str) -> Abstention:
+def _declined(
+    abstention: Abstention, reason: str, *, decided_by: str | None = None
+) -> Abstention:
     return Abstention(
         settlement_id=abstention.settlement_id,
         detail_id=abstention.detail_id,
         pass_name="adjudication",
         candidate_event_ids=abstention.candidate_event_ids,
         reason=reason,
+        decided_by=decided_by,
     )
 
 

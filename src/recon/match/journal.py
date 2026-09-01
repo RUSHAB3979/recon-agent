@@ -151,6 +151,21 @@ def _claim_inputs(batch: Batch, claim: Claim, lines: Mapping[str, object]) -> di
     return inputs
 
 
+def _rule(base: str, decided_by: str | None) -> str:
+    """Name the rule that fired, and the actor when it was not this code.
+
+    ``rule`` already answers "which rule fired" for every deterministic record,
+    and for those the pass name IS the actor. A model-backed rung is the one
+    case where the two come apart: the rule is the same on every line and the
+    reader that answered can change between runs, between lines, or with one
+    constructor argument. Folding the actor in here keeps the sealed record
+    answerable to "which of these did that model decide" without adding a field
+    that would be null on the other 99% of records -- and, because deterministic
+    claims pass None, every hash in the published logs is unchanged.
+    """
+    return base if decided_by is None else f"{base} by {decided_by}"
+
+
 def _claim_decision(
     batch: Batch,
     claim: Claim,
@@ -162,7 +177,7 @@ def _claim_decision(
         subject=(claim.settlement_id, claim.detail_id or "-", claim.event_id),
         action="match",
         inputs=_claim_inputs(batch, claim, lines),
-        rule=f"{claim.pass_name}/{claim.tier.value}",
+        rule=_rule(f"{claim.pass_name}/{claim.tier.value}", claim.decided_by),
         result={"settlement_id": claim.settlement_id, "event_id": claim.event_id},
         confidence=float(claim.confidence),
         reasoning=_reasoning(claim.reasons, f"attributed by {claim.pass_name}"),
@@ -186,7 +201,7 @@ def _abstention_decisions(
                 "candidate_event_ids": list(abstention.candidate_event_ids),
                 "candidate_count": len(abstention.candidate_event_ids),
             },
-            rule=f"{result.pass_name}/abstain",
+            rule=_rule(f"{result.pass_name}/abstain", abstention.decided_by),
             # Recording the surviving candidates as the result is what makes the
             # abstention actionable: an operator opening this record is shown the
             # shortlist the engine could not separate, not merely that it failed.

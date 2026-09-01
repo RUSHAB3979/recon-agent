@@ -180,15 +180,17 @@ achievable band on primary is **94 to 100**, and where a real model lands inside
 it is an empirical question this repo answers by running the command, not by
 asserting it.
 
-Four properties are structural rather than promised, and each has a test:
+Five properties are structural rather than promised, and each has a test:
 
 - the rung is handed the abstention list by the runner, so it **cannot see a
   resolved case**;
 - it answers with a letter from a closed shortlist, and a letter outside it is
   **discarded, not repaired** — it cannot name an event the gates never admitted;
 - amounts and dates are **absent from the prompt**, because every candidate
-  matched the delta exactly and they carry no discriminating information; and
-- a confidence below the floor is recorded as a **decline**.
+  matched the delta exactly and they carry no discriminating information;
+- a confidence below the floor is recorded as a **decline**; and
+- the claim it produces is sealed into the audit chain naming **which reader
+  decided it**, so a model-made attribution is never mistaken for a proof.
 
 Cost is metered per call (input, output and cached tokens) and printed by the
 command that incurs it. The stable system prompt is marked cacheable, since
@@ -509,7 +511,12 @@ before and after the fix, and that equality is what makes it safe.
 ## Audit trail
 
 Every decision records what it saw, which rule fired, what it concluded, with
-what confidence, and whether it is overridable. Two hashes do two jobs:
+what confidence, and whether it is overridable. A decision a model made records
+**which reader made it** — `adjudication/SUGGESTED by claude-haiku-4-5-20251001`
+— because confidence and reasoning say what was concluded and not whose
+judgement it was, and after a model swap the log could not otherwise answer
+which attributions the old one made. Declines the rung reaches on its own rules,
+with no reader consulted, name nobody. Two hashes do two jobs:
 
 - **`decision_id`** is an *identity*. It covers stage, subject and action only,
   which is what makes it stable enough to be referenced by an override and
