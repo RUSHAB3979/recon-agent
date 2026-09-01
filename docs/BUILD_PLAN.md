@@ -128,12 +128,13 @@ means classification — the `NOT_SETTLEABLE` trap, `CAPTURED_UNSETTLED`,
 
 ## 3. Revised phases
 
-**Status as of 26 Aug 2026.** Phases A, B and C are complete and verified;
-`make verify` is green at 714 tests. Phase C closed all three families at
+**Status as of 1 Sep 2026.** Phases A through E are complete and verified;
+`make verify` is green at 818 tests. Phase C closed all three families at
 100/100, which saturated the benchmark and forced an unplanned hardening pass
-(section 3a below) before Phase E could measure anything. Phase D exists in a
-first version — `make report` already prints the per-pass yield and per-gate
-elimination tables. Phases E and F are open.
+(section 3a below) before Phase E could measure anything. Phase D is closed by
+Phase H, which wired the abstention curve into `make report` and found, while
+doing it, that case confidence was hardcoded to 1.0. Only the demo surface
+remains.
 
 | phase | state |
 |---|---|
@@ -141,9 +142,11 @@ elimination tables. Phases E and F are open.
 | B — normalizer + pass ladder | ✅ complete |
 | C — nine-gate recovery pass | ✅ complete |
 | 3a — benchmark hardening | ✅ complete (unplanned) |
-| D — full report | 🟡 per-pass and per-gate tables done; abstention curve and exception metrics outstanding |
-| E — adjudicator | ⬜ open, and now has measured work |
-| F — surface | ⬜ open |
+| D — full report | ✅ complete; abstention curve landed in Phase H |
+| E — adjudicator | ✅ complete, off by default |
+| G — exception list | ✅ complete |
+| H — abstention curve | ✅ complete (unplanned defect found) |
+| F — surface | 🟡 holdout run and demo outstanding |
 
 
 ### Phase A — data integrity (24 Aug, half a day)
@@ -401,8 +404,51 @@ that does not tie out) and abstentions (money that arrived and is not yet
 attributed). On every family the abstentions are the larger number, so a
 combined total would be dominated by the part that is not missing.
 
-Still outstanding: the abstention/coverage curve and the demo surface. If a
-number disappoints it gets reported, not re-tuned.
+### Phase H -- the abstention curve, and the defect it exposed
+
+`precision_coverage_curve` had existed in the scorer, with a test, since the
+metrics module was written. Nothing printed it. Wiring it into `make report`
+was meant to be the last small item on Phase D and instead found the reason it
+had never been missed.
+
+**Case confidence was hardcoded to 1.0 on every resolved path.** The
+adjudicator books SUGGESTED claims at whatever the reader stated, and `_verdict`
+overwrote that with certainty on the way to the scorer. Measured with a reader
+answering at 0.72: fourteen dev claims arrived below 1.0, and every case
+resting on them was published at 1.00. Three consequences, none visible in any
+headline number:
+
+- A line the model guessed at was indistinguishable, in the published record
+  and in the audit log, from one nine gates had proved.
+- The SUGGESTED tier -- adopted from Oracle and BlackLine precisely so the
+  middle tier would stop being invisible -- was invisible in every metric that
+  quotes confidence.
+- The abstention dial was inert. No threshold could move a decision, so the
+  curve would have been flat under every reader, and the flatness would have
+  looked like a property of the engine instead of a bug in the reporting.
+
+A case now carries the **minimum** confidence over the claims holding it up.
+Minimum rather than mean: a case with one proved leg and one guessed leg is a
+guess, and averaging would let the proof launder the guess through an
+operator's threshold filter. A case resting on no claims is a disposition the
+engine reached alone and stays at 1.0.
+
+Every deterministic claim is 1.0, so the published figures are byte-identical
+before and after -- 818 tests green, `make verify` unchanged, the README table
+regenerated to the same numbers. That invariance is what made the fix safe to
+make this late.
+
+On the deterministic ladder the curve is genuinely flat, and the report says so
+in a line **computed from the run** rather than asserted in prose, so a future
+graded rung retires the note by changing the data. Coverage at every threshold:
+0.82 dev, 0.90 primary, 0.84 stress, each at 1.0000 precision and a 0.00%
+false-match rate. Two tests hold the pair of claims that matters: the
+deterministic ladder is certain or absent, and a rung supplying graded
+confidence makes the dial trade coverage for precision in the expected
+direction.
+
+Still outstanding: the demo surface. If a number disappoints it gets reported,
+not re-tuned.
 
 ---
 

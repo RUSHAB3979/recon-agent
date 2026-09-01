@@ -288,9 +288,30 @@ def _verdict(
     abstained_lines_by_settlement = ladder.abstained_lines_by_settlement()
 
     allocations: set[tuple[str, str]] = set()
+    claim_confidences: list[float] = []
     for settlement_id in case.settlement_ids:
         for claim in claims_by_settlement.get(settlement_id, ()):
             allocations.add((claim.event_id, settlement_id))
+            claim_confidences.append(claim.confidence)
+
+    # A case is only as certain as the least certain claim holding it up.
+    #
+    # This used to be a hardcoded 1.0 on every resolved path, and that was a
+    # real defect rather than a rounding of one: the adjudicator books SUGGESTED
+    # claims at whatever the model said, and flattening them to 1.0 published a
+    # line a model guessed at as though nine gates had proved it. With a reader
+    # answering at 0.72, fourteen dev claims arrived below certainty and every
+    # case resting on them was still published at 1.00, the middle
+    # tier was invisible in every metric that quotes confidence, and the
+    # precision/coverage curve could not move -- the abstention dial was inert
+    # by construction while looking like a measurement.
+    #
+    # Minimum, not mean: a case resting on one proved leg and one guessed leg is
+    # a guess, and averaging would let the proved leg launder the other. A case
+    # resting on no claims at all is a disposition the engine reached by itself,
+    # so it stays at 1.0 -- which is why every deterministic figure this project
+    # publishes is byte-identical before and after this change.
+    confidence = min(claim_confidences, default=1.0)
 
     if not case.has_settlements:
         outcome, category, reasons, exposure = _disposition_without_settlement(
@@ -351,7 +372,7 @@ def _verdict(
             category=hard[0].category,
             reasons=reasons,
             allocations=frozenset(allocations),
-            confidence=1.0,
+            confidence=confidence,
             # Every hard finding, not only the one that named the category. A
             # case with three breaks is worth all three to whoever works it.
             exposure_paise=sum(finding.exposure_paise for finding in hard),
@@ -363,7 +384,7 @@ def _verdict(
         category=DUPLICATE_WARNING if findings else None,
         reasons=reasons,
         allocations=frozenset(allocations),
-        confidence=1.0,
+        confidence=confidence,
         exposure_paise=0,
     )
 

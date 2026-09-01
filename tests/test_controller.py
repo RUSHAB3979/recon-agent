@@ -342,3 +342,118 @@ def test_the_same_dataset_reconciles_identically_twice(tmp_path_factory):
     first = reconcile(directory).verdicts
     second = reconcile(directory).verdicts
     assert first == second
+
+
+# --------------------------------------------------------------------------
+# how certain a case is allowed to claim to be
+# --------------------------------------------------------------------------
+
+
+class _SuggestingRung:
+    """A fake rung that claims one anonymous line at a stated confidence.
+
+    Stands in for the evidence-reading rung without a model in the loop. What
+    matters for these tests is only that a claim can arrive below 1.0, which is
+    a property of the SUGGESTED tier rather than of any particular reader.
+    """
+
+    name = "suggesting"
+    cardinality = Cardinality.ONE_TO_ONE
+    tolerance = None
+
+    def __init__(self, settlement_id: str, event_id: str, confidence: float) -> None:
+        self._settlement_id = settlement_id
+        self._event_id = event_id
+        self._confidence = confidence
+
+    def run(self, batch, consumed):
+        claim = Claim(
+            settlement_id=self._settlement_id,
+            event_id=self._event_id,
+            detail_id=None,
+            pass_name=self.name,
+            tier=ClaimTier.SUGGESTED,
+            confidence=self._confidence,
+            reasons=("fabricated for the confidence test",),
+        )
+        return PassResult(self.name, claims=[claim], examined=1)
+
+
+def test_the_deterministic_ladder_is_certain_or_absent(run):
+    """Proof or abstain, measured rather than asserted.
+
+    The gates either leave exactly one survivor or leave the line alone, so
+    every case the deterministic engine resolves carries 1.0 and every case it
+    declines carries 0.0. The report's precision/coverage table quotes this
+    fact as the reason its curve is flat, and a rung that later emits a graded
+    confidence has to retire that note -- so the claim is pinned here, where
+    breaking it fails a test instead of quietly making a printed sentence
+    wrong.
+    """
+    directory, _, _, _ = run
+    confidences = {verdict.confidence for verdict in reconcile(directory).verdicts}
+    assert confidences <= {0.0, 1.0}
+
+
+def test_a_suggested_claim_lowers_the_confidence_of_its_own_case(tmp_path_factory):
+    """A case is only as certain as the least certain claim holding it up.
+
+    This was hardcoded to 1.0 on every resolved path, which published a line a
+    model had guessed at as though nine gates had proved it. The bug was
+    invisible in every headline metric -- the allocation was still right or
+    wrong on its own merits -- and showed up only as an abstention curve that
+    could not move.
+    """
+    directory = _dataset(tmp_path_factory, 42, Family.DEVELOPMENT)
+    batch = load_batch(directory)
+    line = next(line for line in batch.details if not line.is_anonymous)
+    assert line.event_id is not None
+
+    rung = _SuggestingRung(line.settlement_id, line.event_id, 0.72)
+    verdicts = reconcile(directory, (rung, *DEFAULT_LADDER)).verdicts
+
+    touched = [
+        verdict
+        for verdict in verdicts
+        if (line.event_id, line.settlement_id) in verdict.allocations
+    ]
+    assert len(touched) == 1
+    assert touched[0].confidence == pytest.approx(0.72)
+
+    others = [verdict for verdict in verdicts if verdict is not touched[0]]
+    assert {verdict.confidence for verdict in others} <= {0.0, 1.0}
+
+
+def test_confidence_is_the_minimum_and_never_the_average(tmp_path_factory):
+    """One proved leg must not launder a guessed one.
+
+    A mean would report a case with one certain and one uncertain allocation as
+    more certain than the uncertain half of it, which is the direction of error
+    that costs money: the operator filters at a threshold and the guess rides
+    through under cover of the proof.
+    """
+    directory = _dataset(tmp_path_factory, 42, Family.DEVELOPMENT)
+    batch = load_batch(directory)
+
+    # A settlement carrying at least two joinable lines, so the case ends up
+    # holding one deterministic claim at 1.0 beside the suggested one.
+    by_settlement: dict[str, list] = {}
+    for detail in batch.details:
+        if not detail.is_anonymous:
+            by_settlement.setdefault(detail.settlement_id, []).append(detail)
+    settlement_id, lines_here = next(
+        (key, value) for key, value in sorted(by_settlement.items()) if len(value) >= 2
+    )
+
+    target = lines_here[0]
+    assert target.event_id is not None
+    rung = _SuggestingRung(settlement_id, target.event_id, 0.60)
+    verdicts = reconcile(directory, (rung, *DEFAULT_LADDER)).verdicts
+
+    verdict = next(
+        verdict
+        for verdict in verdicts
+        if (target.event_id, settlement_id) in verdict.allocations
+    )
+    assert len(verdict.allocations) > 1
+    assert verdict.confidence == pytest.approx(0.60)

@@ -26,19 +26,36 @@ import argparse
 from pathlib import Path
 from typing import Sequence
 
-from recon.match.controller import RunResult, reconcile
+from recon.match.controller import ABSTAIN, RunResult, reconcile
 from recon.match.exceptions import build_exception_list, format_text
 from recon.match.passes import DEFAULT_LADDER, Pass
 from recon.metrics import baselines
-from recon.metrics.score import AnswerKey, ScoreReport, score
+from recon.metrics.score import (
+    AnswerKey,
+    ScoreReport,
+    precision_coverage_curve,
+    score,
+)
 
-__all__ = ["compare", "render"]
+__all__ = ["CURVE_THRESHOLDS", "compare", "render"]
+
+# The abstention dial, swept from "keep everything" to "keep only certainty".
+# Published as a curve rather than as a single operating point because coverage
+# and correctness trade off, and which end of that trade is right is the
+# operator's call, not the agent's.
+CURVE_THRESHOLDS = (0.00, 0.25, 0.50, 0.75, 0.90, 0.95, 1.00)
 
 
 def compare(
     directory: str | Path, ladder: Sequence[Pass] = DEFAULT_LADDER
-) -> tuple[ScoreReport, ScoreReport, ScoreReport, RunResult]:
-    """Score the agent, B1 and B2 over one dataset directory."""
+) -> tuple[ScoreReport, ScoreReport, ScoreReport, RunResult, AnswerKey]:
+    """Score the agent, B1 and B2 over one dataset directory.
+
+    The answer key is returned rather than re-loaded by the caller so that
+    every figure in one rendered family is scored against the same key object.
+    Two loads would almost always agree, and the one time they did not the
+    report would disagree with itself without saying so.
+    """
     directory = Path(directory)
     key = AnswerKey.load(directory)
     run = reconcile(directory, ladder)
@@ -47,7 +64,7 @@ def compare(
     batch = baselines.Batch.load(directory)
     b1 = baselines.score_shared(directory, baselines.run_b1(batch))
     b2 = baselines.score_shared(directory, baselines.run_b2(batch))
-    return agent, b1, b2, run
+    return agent, b1, b2, run, key
 
 
 def _row(label: str, report: ScoreReport) -> str:
@@ -113,6 +130,56 @@ def _print_classification(agent: ScoreReport) -> None:
     )
 
 
+def _print_curve(run: RunResult, key: AnswerKey) -> None:
+    """Print precision and coverage as the abstention threshold is swept.
+
+    A single accuracy figure hides the trade every reconciliation team actually
+    argues about: how much of the batch the machine is allowed to close against
+    how often it may be wrong. So the dial is swept and the whole curve is
+    published, and the operator picks the row they can defend to their auditor.
+
+    THE CURVE IS FLAT HERE, AND THAT IS THE FINDING. The deterministic ladder
+    emits exactly two confidences -- 1.0 when all nine gates leave one survivor,
+    0.0 when it abstains -- so no threshold in (0, 1] moves a single decision
+    and there is nothing to trade. That is not a defect in the instrument, it is
+    what "proof or abstain" means when you measure it: the engine has no ranked
+    middle to spend, because it never ranks. The dial is real only on the
+    evidence-reading rung, where ``--min-confidence`` decides how sure the model
+    must be before its reading is allowed to stand.
+
+    The degeneracy note below is computed from the run rather than asserted in
+    prose, so a rung that later emits graded confidence retires the note by
+    changing the data, not by somebody remembering to delete a paragraph.
+    """
+    output = run.to_agent_output()
+    rows = precision_coverage_curve(output, key, CURVE_THRESHOLDS)
+
+    print("\n    precision / coverage across abstention thresholds:")
+    print(
+        f"      {'threshold':>9} {'coverage':>9} {'precision':>10} "
+        f"{'false match':>12}"
+    )
+    for threshold, coverage, precision, false_match in rows:
+        print(
+            f"      {threshold:>9.2f} {coverage:>9.4f} {precision:>10.4f} "
+            f"{false_match:>12.4f}"
+        )
+
+    retained = sorted(
+        {
+            decision.confidence
+            for decision in output.decisions
+            if decision.outcome != ABSTAIN
+        }
+    )
+    if len(retained) <= 1:
+        held = ", ".join(f"{value:.2f}" for value in retained) or "none"
+        print(
+            f"      flat by construction: every retained decision carries "
+            f"confidence {held}, so no threshold moves one."
+        )
+
+
 def _print_queue(run: RunResult) -> None:
     """Print the head of the operator queue this run would hand to a human.
 
@@ -128,7 +195,7 @@ def _print_queue(run: RunResult) -> None:
 
 
 def render(directory: str | Path, ladder: Sequence[Pass] = DEFAULT_LADDER) -> None:
-    agent, b1, b2, run = compare(directory, ladder)
+    agent, b1, b2, run, key = compare(directory, ladder)
 
     print(f"\n{directory}")
     print(
@@ -177,6 +244,7 @@ def render(directory: str | Path, ladder: Sequence[Pass] = DEFAULT_LADDER) -> No
             print(f"      {name:<28} {count:>5}{mark}")
 
     _print_classification(agent)
+    _print_curve(run, key)
     _print_queue(run)
 
     print(

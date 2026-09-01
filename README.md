@@ -468,6 +468,44 @@ separating almost nothing *within* the refund class. The mechanism is the
 deliverable; the specific rupee magnitudes of those rows are a property of how
 the benchmark had to be built.
 
+### The abstention dial, and why its curve is flat
+
+`make report` sweeps the confidence threshold and prints coverage, precision and
+false-match rate at each stop, because a single accuracy figure hides the trade
+every reconciliation team actually argues about: how much of the batch the
+machine may close, against how often it may be wrong.
+
+| threshold | dev | primary | stress |
+|---|---|---|---|
+| any | 0.82 coverage @ 1.0000 | 0.90 coverage @ 1.0000 | 0.84 coverage @ 1.0000 |
+
+**Every row is identical, and that is the finding.** The deterministic ladder
+emits exactly two confidences — 1.0 when the nine gates leave one survivor, 0.0
+when it abstains — so no threshold in (0, 1] moves a single decision. The curve
+is flat because there is no ranked middle to spend. That is what *proof or
+abstain* looks like once you measure it instead of asserting it, and it is the
+reason precision is 1.0000 at every stop rather than bought back by tightening.
+
+Two things keep that honest rather than convenient. The note printed under the
+table is **computed from the run**, so a rung that later emits graded confidence
+retires it by changing the data rather than by someone remembering to delete a
+paragraph. And the flatness itself is a test — `test_the_deterministic_ladder_is_certain_or_absent`
+— not a sentence.
+
+The dial is real on the evidence-reading rung, where `--min-confidence` decides
+how sure the model must be before its reading is allowed to stand. Getting there
+required fixing a defect worth recording: case confidence was hardcoded to 1.0
+on every resolved path, so a line the model had *guessed* at was published as
+though nine gates had proved it: with a reader answering at 0.72, fourteen dev
+claims arrived below certainty and every case resting on them was still
+published at 1.00, so the curve could not move no matter what the reader did.
+
+A case now carries the **minimum** confidence of the claims holding it up —
+minimum rather than mean, because averaging lets one proved leg launder a
+guessed one straight through an operator's threshold filter. Every
+deterministic claim is 1.0, so every published number above is byte-identical
+before and after the fix, and that equality is what makes it safe.
+
 ## Audit trail
 
 Every decision records what it saw, which rule fired, what it concluded, with
