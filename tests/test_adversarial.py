@@ -314,7 +314,9 @@ def test_the_verdict_stage_does_not_rebuild_its_indexes_per_case(clean, monkeypa
     ``LadderRun.claims_by_settlement`` and ``attributed_detail_ids`` -- whole-run
     indexes rebuilt once per case, which is quadratic in the batch. Measured
     end-to-end: 500 records at 48k records/sec, 20,000 at 1.3k, a 37x collapse
-    over a 40x increase in size.
+    over a 40x increase in size. (Two further costs were found and removed the
+    same way: gate 1's index, and gate 8 re-solving the whole batch's matching
+    once per candidate rather than one connected component's.)
 
     Asserting a wall-clock number would be flaky on a shared runner, so the
     property is asserted instead: these indexes are built a bounded number of
@@ -375,8 +377,9 @@ def test_throughput_does_not_collapse_with_batch_size(tmp_path):
         timings[records] = time.perf_counter() - started
 
     growth = timings[5000] / max(timings[500], 1e-6)
-    # Measured at 17x after the two accidental quadratics were removed; it was
-    # 72x before. The bound is set well above the measurement so this fails on a
-    # complexity regression rather than on a noisy runner, and deliberately
-    # below the old figure so the regression it caught cannot come back unseen.
-    assert growth < 35, f"10x the records cost {growth:.0f}x the time: {timings}"
+    # 72x before any of this; 17x once the two accidental quadratics went; 12.5x
+    # once gate 8 stopped re-solving the whole batch per candidate. The bound
+    # sits well above the measurement so this fails on a complexity regression
+    # rather than on a noisy runner, and well below the figure it started at so
+    # the regression it caught cannot come back unseen.
+    assert growth < 25, f"10x the records cost {growth:.0f}x the time: {timings}"
