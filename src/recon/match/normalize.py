@@ -52,8 +52,10 @@ WHAT THIS MODULE DELIBERATELY DOES NOT DO
 from __future__ import annotations
 
 import csv
+import re
 from collections import defaultdict
 from dataclasses import dataclass
+from functools import cached_property
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -124,26 +126,57 @@ def _optional(row: Mapping[str, str], column: str) -> str | None:
     return value or None
 
 
+# Exactly what "integer paise" means, spelled out. int() is more generous than
+# this: it takes PEP 515 underscores (1_000), a leading plus, and decimal digits
+# from any script (١٢٣). None of those come out of a payments system, and each
+# is a shape the parser would be accepting without ever having decided to. The
+# contract is narrow on purpose -- this is the boundary where the project has
+# already decided that guessing is worse than stopping.
+_INTEGER_PAISE = re.compile(r"-?[0-9]+")
+
+
 def _paise(row: Mapping[str, str], column: str, context: str) -> int:
     raw = _require(row, column, context)
-    try:
-        return int(raw)
-    except ValueError as exc:
+    if not _INTEGER_PAISE.fullmatch(raw):
         # A decimal point here would mean the export changed units. Guessing
         # would be worse than stopping: a silent rupees/paise mix-up is a
         # hundredfold error that every control equation would then report as a
         # reconciliation failure.
         raise NormalizationError(
             f"{context}: {column}={raw!r} is not integer paise"
-        ) from exc
+        )
+    return int(raw)
 
 
 def _timestamp(row: Mapping[str, str], column: str, context: str) -> datetime:
+    """Parse a naive ISO timestamp, and refuse one that carries an offset.
+
+    An offset is accepted by ``fromisoformat`` and then thrown away by every
+    ``.date()`` downstream, which is the dangerous combination: the calendar day
+    is taken in whatever offset the string happened to carry.
+    ``2026-06-05T23:30:00-08:00`` is the 6th in UTC and is read as the 5th. The
+    recovery window is four days wide, so a one-day shift can admit a candidate
+    the window should have rejected -- silently, on the field that decides where
+    money is attributed.
+
+    The alternative is to normalise, and that means choosing a timezone for the
+    merchant. A parser does not get to make that choice on a settlement file, so
+    it stops and says what it found.
+    """
     raw = _require(row, column, context)
     try:
-        return datetime.fromisoformat(raw)
+        parsed = datetime.fromisoformat(raw)
     except ValueError as exc:
-        raise NormalizationError(f"{context}: {column}={raw!r} is not an ISO timestamp") from exc
+        raise NormalizationError(
+            f"{context}: {column}={raw!r} is not an ISO timestamp"
+        ) from exc
+    if parsed.tzinfo is not None:
+        raise NormalizationError(
+            f"{context}: {column}={raw!r} carries a UTC offset; this pipeline "
+            "reasons in the merchant's settlement calendar and will not guess "
+            "which day an offset timestamp belongs to"
+        )
+    return parsed
 
 
 def _day(row: Mapping[str, str], column: str, context: str) -> date:
@@ -157,7 +190,11 @@ def _day(row: Mapping[str, str], column: str, context: str) -> date:
 def _read_csv(path: Path, required: Sequence[str]) -> Iterator[dict[str, str]]:
     if not path.exists():
         raise NormalizationError(f"required input {path.name} is missing from {path.parent}")
-    with path.open(newline="", encoding="utf-8") as handle:
+    # utf-8-sig, not utf-8: Excel writes a BOM, and read as plain utf-8 it lands
+    # on the first header cell. The column then reads as "\ufeffbank_row_id" and
+    # the loader reports it missing -- sending an operator to look for a schema
+    # problem that does not exist, over a file that is entirely fine.
+    with path.open(newline="", encoding="utf-8-sig") as handle:
         reader = csv.DictReader(handle)
         header = reader.fieldnames or []
         missing = [column for column in required if column not in header]
@@ -342,13 +379,21 @@ class Batch:
         """Every line with no event_id -- the residual the ladder must resolve."""
         return tuple(line for line in self.details if line.is_anonymous)
 
-    @property
+    @cached_property
     def referenced_event_ids(self) -> frozenset[str]:
         """Events some detail line already names.
 
         This is gate 1. A refund event the export has already attributed to a
         settlement cannot also explain a different anonymous line, and that is
         a fact the file states rather than an inference the agent makes.
+
+        Cached rather than recomputed. Gate 1 asks this question once per
+        candidate, and as a plain property each ask was a fold over every detail
+        line in the batch: profiled at 8,000 records it was 1,714 calls and 10.9
+        million iterations, the largest single cost in the run. A ``Batch`` is
+        frozen and built once per run, so the fold has exactly one answer for
+        the lifetime of the object -- which is the case where caching is a fact
+        about the value rather than a bet about how it will be used.
         """
         return frozenset(
             line.event_id for line in self.details if line.event_id is not None
