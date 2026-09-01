@@ -146,7 +146,7 @@ remains.
 | E — adjudicator | ✅ complete, off by default |
 | G — exception list | ✅ complete |
 | H — abstention curve | ✅ complete (unplanned defect found) |
-| F — surface | 🟡 holdout run and demo outstanding |
+| F — surface | 🟡 demo built; holdout run and pitch video outstanding |
 
 
 ### Phase A — data integrity (24 Aug, half a day)
@@ -350,10 +350,43 @@ families**, reached while still abstaining on the four primary
 
 Abstention remains free and never penalised.
 
-### Phase F — surface (3–5 Sep)
+### Phase F — surface (3–5 Sep) — **demo built**
 
-Demo UI, README via `make stats` (never hand-edited), pitch video. Holdout runs
-**once**, at the start of this phase.
+README via `make stats` (never hand-edited) has been in place since Phase D.
+The demo surface is `make demo`: `src/recon/metrics/dashboard.py` writes
+`runs/demo/index.html` — scoreboard, difficulty floor, per-pass yield, per-gate
+eliminations, the abstention curve, the classification table, the operator queue
+with its evidence, and the run's chain head, for all three families in one file.
+
+**One file, no server, no JavaScript, no network.** The alternative — a small
+web app — was rejected for the reason the rest of this repo keeps choosing:
+a reconciliation result is something you hand to somebody, and a demo that needs
+a running process is broken the day after the deadline. This one opens from
+disk, prints to PDF and attaches to an email.
+
+The two properties that matter are tests, not intentions:
+
+- **It agrees with the terminal.** The page, `make report` and `make exceptions`
+  go through the same `compare()` and the same exception builder.
+  `test_the_page_and_the_terminal_report_agree` renders both surfaces and
+  requires the figures carrying the claim to appear in each. A dashboard is the
+  easiest place in a project to lie by accident — written last, read by people
+  who will not run the commands — and this is what closes that.
+- **It tracks the run.** Rendered from a join-only ladder the page must change,
+  and both its score and its queue must move with it. Without that, every other
+  assertion about the page checks that a constant is still a constant.
+
+Also tested: the page makes no external request and contains no `<script>`;
+evidence text is escaped rather than injected; the markup is well-formed; and
+`render([])` raises rather than emitting an empty dashboard. CI builds the page
+and uploads it as an artifact, so a judge is never the first to find it broken.
+
+Money is formatted from integer paise with `divmod` and manual grouping rather
+than by dividing by 100 — the presentation boundary is exactly where the habit
+of keeping money off floats is usually dropped.
+
+Still outstanding: the holdout run (**once**, and whatever it says gets
+reported, not re-tuned) and the pitch video.
 
 The tamper-evident audit chain has landed: `record_hash =
 SHA256(previous_hash + canonical_json(complete record))`, verified on read, with

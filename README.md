@@ -88,6 +88,7 @@ make report        # score the agent and both baselines through one scorer
 make verify        # tests + baselines + report + ambiguity + audit chain + stats
 make audit         # write runs/<family>/audit.jsonl -- every sealed decision
 make exceptions    # write runs/<family>/exceptions.csv -- the operator queue
+make demo          # write runs/demo/index.html -- the whole run, as one page
 ```
 
 The evidence-reading rung is opt-in and never contributes to a published
@@ -508,6 +509,39 @@ guessed one straight through an operator's threshold filter. Every
 deterministic claim is 1.0, so every published number above is byte-identical
 before and after the fix, and that equality is what makes it safe.
 
+## The demo surface
+
+`make demo` writes `runs/demo/index.html`: the scoreboard, the difficulty floor,
+per-pass yield, per-gate eliminations, the abstention curve, the classification
+table, the operator queue with its evidence, and the run's audit-chain head —
+all three families, one file.
+
+It is **one HTML file with no server, no build step, no network access and no
+JavaScript.** It opens from disk, prints to PDF and attaches to an email. That
+is not minimalism for its own sake: a reconciliation result is something you
+hand to somebody, and a demo that needs a running process is a demo that is
+broken the day after the deadline.
+
+Two properties matter more than how it looks, and both are tests rather than
+intentions:
+
+- **It agrees with the terminal.** The page, `make report` and `make exceptions`
+  all go through the same `compare()` call and the same exception builder. A
+  dashboard that computed its own figures could flatter the run in ways the
+  command line never showed, so `test_the_page_and_the_terminal_report_agree`
+  renders both and requires the numbers that carry the claim to appear in each.
+- **It tracks the run.** Rendered from a deliberately weaker ladder, the page
+  has to change — `test_a_weaker_ladder_renders_a_different_page`. Without that,
+  every other assertion about the page would be checking that a constant is
+  still a constant.
+
+No figure on the page is typed into it, there is no rounded headline written by
+hand beside a computed one, and where a number would mislead on its own the
+qualifying number shares its row rather than sitting in a footnote — because a
+reader looking at a dashboard reads rows, not footnotes. CI builds the page on
+every run and uploads it as an artifact, so a judge is never the first person to
+discover it broke.
+
 ## Audit trail
 
 Every decision records what it saw, which rule fired, what it concluded, with
@@ -586,6 +620,7 @@ src/recon/metrics/
   score.py              one scorer, used by both the agent and the baselines
   baselines.py          B1, B2, B3 and the lexical hit-rate measurement
   report.py             the published comparison table
+  dashboard.py          the demo surface: one self-contained generated page
 tests/                  answer-key self-validation + engine tests, 4 seeds
 tools/ambiguity.py      independent recovery-ambiguity measurement
 tools/refresh_stats.py  regenerates the README table from data/
