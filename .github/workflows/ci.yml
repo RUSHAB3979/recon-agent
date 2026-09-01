@@ -70,6 +70,19 @@ jobs:
       - name: Exception queue
         run: make exceptions
 
+      # The demo surface is generated from a run, so it can break the way code
+      # breaks. Building it here means a judge is never the first person to
+      # find that out, and the uploaded artifact is the page itself rather
+      # than a screenshot of one.
+      - name: Demo page
+        run: make demo
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: run-report
+          path: runs/demo/index.html
+          if-no-files-found: error
+
       # 4. The README metrics table went stale twice when it was maintained by
       #    hand. It is generated, and this step fails the build if the committed
       #    copy no longer matches the data.
