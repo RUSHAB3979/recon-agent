@@ -50,6 +50,34 @@ Per-scenario, the deterministic engine closes `CORROBORATED_REFUND`,
 scores **0/6 on `DESCRIBED_REFUND` — by abstaining on all six.** That is the
 designed residual, and the section below explains why it is there.
 
+### The holdout
+
+Pre-registered in `tools/holdout.py` and committed *before* the run, so the
+commit order is the evidence rather than the assurance. Five contiguous seeds
+(70001–70005) that nothing in this repository had ever generated, scored or
+looked at, on the realistic-prevalence mix, against the frozen ladder, run once:
+
+| | held-out result |
+|---|---|
+| outcome accuracy | **94.0%** on all five seeds (mean, min and max) |
+| false-match rate | **0.00%** on all five |
+| allocation precision | **1.0000** on all five |
+| difficulty floor D vs B2 | 8.0% – 13.0% |
+| headroom over B2 | **+2 to +7 cases** |
+
+Identical to the published primary figure, so nothing was fitted to the batches
+in `data/`. **But the constancy is structural, not stability**, and saying so is
+the point: `PRIMARY_CASE_SHARES` is a fixed partition of 100 cases, so every seed
+draws exactly 6 `DESCRIBED_REFUND` cases and the agent abstains on all of them.
+94 is 100 − 6 by construction, on any seed. A holdout returning the same number
+five times measures less than it appears to.
+
+What genuinely moved is the more interesting half. **D moved five points and the
+agent did not.** Across five unseen batches all of the seed-to-seed variance sat
+in the guesser and none in the prover — which is the difference this whole
+project is about, stated in one measurement. Full record, including what it does
+not show: [`docs/HOLDOUT.md`](docs/HOLDOUT.md).
+
 ## Linkage is not reconciliation
 
 The obvious way to build this benchmark is to make identification hard: damage
@@ -89,6 +117,7 @@ make verify        # tests + baselines + report + ambiguity + audit chain + stat
 make audit         # write runs/<family>/audit.jsonl -- every sealed decision
 make exceptions    # write runs/<family>/exceptions.csv -- the operator queue
 make demo          # write runs/demo/index.html -- the whole run, as one page
+make holdout       # run the frozen agent on never-seen seeds (see docs/HOLDOUT.md)
 ```
 
 The evidence-reading rung is opt-in and never contributes to a published
@@ -626,6 +655,7 @@ tools/ambiguity.py      independent recovery-ambiguity measurement
 tools/refresh_stats.py  regenerates the README table from data/
 docs/DATA_SPEC.md       schema, scenario classes, guarantees, limitations
 docs/BUILD_PLAN.md      phase status and what is deliberately not built
+docs/HOLDOUT.md         the pre-registered holdout run and its honest reading
 docs/superpowers/specs/ the authoritative benchmark design record
 data/dev/               development family (the only tuning surface)
 data/primary/           headline batch      (never tune here)
