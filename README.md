@@ -50,6 +50,34 @@ Per-scenario, the deterministic engine closes `CORROBORATED_REFUND`,
 scores **0/6 on `DESCRIBED_REFUND` — by abstaining on all six.** That is the
 designed residual, and the section below explains why it is there.
 
+### The holdout
+
+Pre-registered in `tools/holdout.py` and committed *before* the run, so the
+commit order is the evidence rather than the assurance. Five contiguous seeds
+(70001–70005) that nothing in this repository had ever generated, scored or
+looked at, on the realistic-prevalence mix, against the frozen ladder, run once:
+
+| | held-out result |
+|---|---|
+| outcome accuracy | **94.0%** on all five seeds (mean, min and max) |
+| false-match rate | **0.00%** on all five |
+| allocation precision | **1.0000** on all five |
+| difficulty floor D vs B2 | 8.0% – 13.0% |
+| headroom over B2 | **+2 to +7 cases** |
+
+Identical to the published primary figure, so nothing was fitted to the batches
+in `data/`. **But the constancy is structural, not stability**, and saying so is
+the point: `PRIMARY_CASE_SHARES` is a fixed partition of 100 cases, so every seed
+draws exactly 6 `DESCRIBED_REFUND` cases and the agent abstains on all of them.
+94 is 100 − 6 by construction, on any seed. A holdout returning the same number
+five times measures less than it appears to.
+
+What genuinely moved is the more interesting half. **D moved five points and the
+agent did not.** Across five unseen batches all of the seed-to-seed variance sat
+in the guesser and none in the prover — which is the difference this whole
+project is about, stated in one measurement. Full record, including what it does
+not show: [`docs/HOLDOUT.md`](docs/HOLDOUT.md).
+
 ## Linkage is not reconciliation
 
 The obvious way to build this benchmark is to make identification hard: damage
@@ -88,7 +116,21 @@ make report        # score the agent and both baselines through one scorer
 make verify        # tests + baselines + report + ambiguity + audit chain + stats
 make audit         # write runs/<family>/audit.jsonl -- every sealed decision
 make exceptions    # write runs/<family>/exceptions.csv -- the operator queue
+make demo          # write runs/demo/index.html -- the whole run, as one page
+make holdout       # run the frozen agent on never-seen seeds (see docs/HOLDOUT.md)
 ```
+
+For the four-minute demo — six screens, every figure computed live, no network
+and no API key on the critical path:
+
+```bash
+./tools/pitch.sh --check    # eleven preflight checks, run before presenting
+./tools/pitch.sh            # Enter to advance
+```
+
+The spoken script, the expected output of each beat, the questions a reviewer
+asks and what to do when a command misbehaves are in
+[`docs/PITCH.md`](docs/PITCH.md).
 
 The evidence-reading rung is opt-in and never contributes to a published
 number:
@@ -97,8 +139,21 @@ number:
 python -m recon.match.controller data/dev --adjudicate
 ```
 
-With no `ANTHROPIC_API_KEY` set it selects the declining reader, so the command
-still runs — and still produces the deterministic result.
+With no key set it selects the declining reader, so the command still runs — and
+still produces the deterministic result. Two live readers ship: set
+`ANTHROPIC_API_KEY` for the Anthropic API, or `OPENROUTER_API_KEY` for
+OpenRouter. Selection is by environment rather than by flag, so CI — which has
+neither — measures the deterministic figures, which is what makes them the
+published ones.
+
+The OpenRouter reader is the injected-protocol claim being cashed rather than
+repeated: a second provider on a different wire format, stdlib `urllib` and no
+new dependency, with no change to the rung, the gates, the prompt, the
+closed-list guard, the confidence floor or the scorer. A reader cannot widen
+what the model may do — it returns a label and a confidence, and the rung
+discards a label outside the shortlist and records a sub-floor confidence as a
+decline. So a new provider cannot introduce a new way to be wrong about money,
+only a new way to be unhelpful, which costs an abstention.
 
 ## Architecture
 
@@ -180,15 +235,17 @@ achievable band on primary is **94 to 100**, and where a real model lands inside
 it is an empirical question this repo answers by running the command, not by
 asserting it.
 
-Four properties are structural rather than promised, and each has a test:
+Five properties are structural rather than promised, and each has a test:
 
 - the rung is handed the abstention list by the runner, so it **cannot see a
   resolved case**;
 - it answers with a letter from a closed shortlist, and a letter outside it is
   **discarded, not repaired** — it cannot name an event the gates never admitted;
 - amounts and dates are **absent from the prompt**, because every candidate
-  matched the delta exactly and they carry no discriminating information; and
-- a confidence below the floor is recorded as a **decline**.
+  matched the delta exactly and they carry no discriminating information;
+- a confidence below the floor is recorded as a **decline**; and
+- the claim it produces is sealed into the audit chain naming **which reader
+  decided it**, so a model-made attribution is never mistaken for a proof.
 
 Cost is metered per call (input, output and cached tokens) and printed by the
 command that incurs it. The stable system prompt is marked cacheable, since
@@ -468,10 +525,86 @@ separating almost nothing *within* the refund class. The mechanism is the
 deliverable; the specific rupee magnitudes of those rows are a property of how
 the benchmark had to be built.
 
+### The abstention dial, and why its curve is flat
+
+`make report` sweeps the confidence threshold and prints coverage, precision and
+false-match rate at each stop, because a single accuracy figure hides the trade
+every reconciliation team actually argues about: how much of the batch the
+machine may close, against how often it may be wrong.
+
+| threshold | dev | primary | stress |
+|---|---|---|---|
+| any | 0.82 coverage @ 1.0000 | 0.90 coverage @ 1.0000 | 0.84 coverage @ 1.0000 |
+
+**Every row is identical, and that is the finding.** The deterministic ladder
+emits exactly two confidences — 1.0 when the nine gates leave one survivor, 0.0
+when it abstains — so no threshold in (0, 1] moves a single decision. The curve
+is flat because there is no ranked middle to spend. That is what *proof or
+abstain* looks like once you measure it instead of asserting it, and it is the
+reason precision is 1.0000 at every stop rather than bought back by tightening.
+
+Two things keep that honest rather than convenient. The note printed under the
+table is **computed from the run**, so a rung that later emits graded confidence
+retires it by changing the data rather than by someone remembering to delete a
+paragraph. And the flatness itself is a test — `test_the_deterministic_ladder_is_certain_or_absent`
+— not a sentence.
+
+The dial is real on the evidence-reading rung, where `--min-confidence` decides
+how sure the model must be before its reading is allowed to stand. Getting there
+required fixing a defect worth recording: case confidence was hardcoded to 1.0
+on every resolved path, so a line the model had *guessed* at was published as
+though nine gates had proved it: with a reader answering at 0.72, fourteen dev
+claims arrived below certainty and every case resting on them was still
+published at 1.00, so the curve could not move no matter what the reader did.
+
+A case now carries the **minimum** confidence of the claims holding it up —
+minimum rather than mean, because averaging lets one proved leg launder a
+guessed one straight through an operator's threshold filter. Every
+deterministic claim is 1.0, so every published number above is byte-identical
+before and after the fix, and that equality is what makes it safe.
+
+## The demo surface
+
+`make demo` writes `runs/demo/index.html`: the scoreboard, the difficulty floor,
+per-pass yield, per-gate eliminations, the abstention curve, the classification
+table, the operator queue with its evidence, and the run's audit-chain head —
+all three families, one file.
+
+It is **one HTML file with no server, no build step, no network access and no
+JavaScript.** It opens from disk, prints to PDF and attaches to an email. That
+is not minimalism for its own sake: a reconciliation result is something you
+hand to somebody, and a demo that needs a running process is a demo that is
+broken the day after the deadline.
+
+Two properties matter more than how it looks, and both are tests rather than
+intentions:
+
+- **It agrees with the terminal.** The page, `make report` and `make exceptions`
+  all go through the same `compare()` call and the same exception builder. A
+  dashboard that computed its own figures could flatter the run in ways the
+  command line never showed, so `test_the_page_and_the_terminal_report_agree`
+  renders both and requires the numbers that carry the claim to appear in each.
+- **It tracks the run.** Rendered from a deliberately weaker ladder, the page
+  has to change — `test_a_weaker_ladder_renders_a_different_page`. Without that,
+  every other assertion about the page would be checking that a constant is
+  still a constant.
+
+No figure on the page is typed into it, there is no rounded headline written by
+hand beside a computed one, and where a number would mislead on its own the
+qualifying number shares its row rather than sitting in a footnote — because a
+reader looking at a dashboard reads rows, not footnotes. CI builds the page on
+every run and uploads it as an artifact, so a judge is never the first person to
+discover it broke.
+
 ## Audit trail
 
 Every decision records what it saw, which rule fired, what it concluded, with
-what confidence, and whether it is overridable. Two hashes do two jobs:
+what confidence, and whether it is overridable. A decision a model made records
+**which reader made it** — `adjudication/SUGGESTED by claude-haiku-4-5-20251001`
+— because confidence and reasoning say what was concluded and not whose
+judgement it was, and after a model swap the log could not otherwise answer
+which attributions the old one made. Declines the rung reaches on its own rules,
+with no reader consulted, name nobody. Two hashes do two jobs:
 
 - **`decision_id`** is an *identity*. It covers stage, subject and action only,
   which is what makes it stable enough to be referenced by an override and
@@ -541,11 +674,16 @@ src/recon/metrics/
   score.py              one scorer, used by both the agent and the baselines
   baselines.py          B1, B2, B3 and the lexical hit-rate measurement
   report.py             the published comparison table
+  dashboard.py          the demo surface: one self-contained generated page
 tests/                  answer-key self-validation + engine tests, 4 seeds
 tools/ambiguity.py      independent recovery-ambiguity measurement
 tools/refresh_stats.py  regenerates the README table from data/
 docs/DATA_SPEC.md       schema, scenario classes, guarantees, limitations
 docs/BUILD_PLAN.md      phase status and what is deliberately not built
+docs/HOLDOUT.md         the pre-registered holdout run and its honest reading
+docs/ADVERSARIAL_REVIEW.md  hostile pass: six findings, all six fixed
+docs/PITCH.md           the four-minute demo runbook and spoken script
+tools/pitch.sh          drives it: --check, then Enter to advance
 docs/superpowers/specs/ the authoritative benchmark design record
 data/dev/               development family (the only tuning surface)
 data/primary/           headline batch      (never tune here)
@@ -563,6 +701,51 @@ and the agent's score on a machine that is not the author's, verifies the audit
 chain, builds the exception queue, and fails the build if the generated README
 table above has gone stale.
 The intent is that no number in this repo has to be taken on the author's word.
+
+## What happens at volume, and what happens to a hostile file
+
+An adversarial pass over the submission is written up in
+[`docs/ADVERSARIAL_REVIEW.md`](docs/ADVERSARIAL_REVIEW.md), and every finding in
+it is reproduced by a test in `tests/test_adversarial.py` that was written
+before the fix and failed. The two worth knowing before you read anything else:
+
+**The exception queue is opened in Excel, so it could carry a formula.** Cells
+beginning `=`, `+`, `-` or `@` are executed by every spreadsheet. In production
+that file's evidence column carries bank narration and gateway payment
+descriptions — text a paying customer chooses. Affected cells are now made inert
+without being made unreadable, and a test asserts ordinary rows are written
+byte-identical.
+
+**Throughput was measured at the batch size where it looks best.** It was not a
+constant — 500 records ran at 47,926/s and 20,000 at 1,303/s, a 37× collapse
+over a 40× increase in size. Three causes, none of them in the nine-gate solver
+where you would look first:
+
+| records | originally | now |
+|---:|---:|---:|
+| 500 | 47,926/s | 68,656/s |
+| 2,000 | 18,184/s | 69,454/s |
+| 8,000 | 3,737/s | 63,016/s |
+| 20,000 | 1,303/s | **56,307/s** |
+| 50,000 | — | 49,397/s |
+| 100,000 | — | 46,761/s |
+
+Two were whole-batch folds recomputed inside per-case and per-candidate loops.
+The third was gate 8: it decides global feasibility by forcing each candidate
+pairing and re-solving the residual assignment problem, and it was re-solving
+the **whole batch's** matching every time. The candidate graph decomposes into
+independent amount-collision clusters, and a maximum matching of a disconnected
+graph is the sum over its components — so forcing an edge perturbs only its own
+cluster, and the gate can be asked the same question about two or three nodes
+instead of forty thousand. That is exact, not an approximation, and three tests
+pin the reasoning rather than only the result.
+
+**Proved identical, not assumed.** A fingerprint of every verdict, claim reason,
+abstention, per-gate counter and audit chain head, across twelve datasets —
+three committed families plus three families × three unseen seeds — hashes the
+same before and after the change. Scaling exponents between adjacent sizes are
+now 1.00, 1.07, 1.12, 1.14, 1.08: linear, and no longer climbing.
+
 
 ## Honest limitation
 

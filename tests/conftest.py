@@ -27,3 +27,16 @@ def stress_dataset(request):
     return generate(
         GenConfig(n_records=500, seed=request.param, family=Family.STRESS)
     )
+
+
+def pytest_configure(config):
+    """`slow` is a real marker, not a typo.
+
+    One test in the adversarial suite generates and reconciles a 5,000-record
+    batch to check the shape of the scaling curve. It is kept marked so it can
+    be deselected on a slow runner without deselecting the complexity assertion
+    that runs in milliseconds beside it.
+    """
+    config.addinivalue_line(
+        "markers", "slow: generates a large batch; seconds rather than milliseconds"
+    )

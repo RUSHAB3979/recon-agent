@@ -166,6 +166,14 @@ class Claim:
     tier: ClaimTier
     confidence: float
     reasons: tuple[str, ...] = ()
+    # WHO decided, when that is not this code. A deterministic pass leaves this
+    # None: the rule it fired IS the decider, and it is already named by
+    # ``pass_name``. A rung backed by a model fills it in, because "confidence
+    # 0.88, because the note names the product" does not say whose judgement
+    # that was, and after a model swap the sealed log could not answer it
+    # either. An auditor asking which attributions a particular reader made has
+    # to be able to get that from the record rather than from the run command.
+    decided_by: str | None = None
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.confidence <= 1.0:
@@ -191,6 +199,10 @@ class Abstention:
     pass_name: str
     candidate_event_ids: tuple[str, ...]
     reason: str
+    # As on ``Claim``: a decline is a decision, and a costed one when a model
+    # made it. Recording the actor on the claim but not on the refusal would
+    # make exactly the half that stays unresolved the half nobody can attribute.
+    decided_by: str | None = None
 
 
 @dataclass

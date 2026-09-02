@@ -128,12 +128,13 @@ means classification — the `NOT_SETTLEABLE` trap, `CAPTURED_UNSETTLED`,
 
 ## 3. Revised phases
 
-**Status as of 26 Aug 2026.** Phases A, B and C are complete and verified;
-`make verify` is green at 714 tests. Phase C closed all three families at
+**Status as of 1 Sep 2026.** Phases A through E are complete and verified;
+`make verify` is green at 818 tests. Phase C closed all three families at
 100/100, which saturated the benchmark and forced an unplanned hardening pass
-(section 3a below) before Phase E could measure anything. Phase D exists in a
-first version — `make report` already prints the per-pass yield and per-gate
-elimination tables. Phases E and F are open.
+(section 3a below) before Phase E could measure anything. Phase D is closed by
+Phase H, which wired the abstention curve into `make report` and found, while
+doing it, that case confidence was hardcoded to 1.0. Only the demo surface
+remains.
 
 | phase | state |
 |---|---|
@@ -141,9 +142,11 @@ elimination tables. Phases E and F are open.
 | B — normalizer + pass ladder | ✅ complete |
 | C — nine-gate recovery pass | ✅ complete |
 | 3a — benchmark hardening | ✅ complete (unplanned) |
-| D — full report | 🟡 per-pass and per-gate tables done; abstention curve and exception metrics outstanding |
-| E — adjudicator | ⬜ open, and now has measured work |
-| F — surface | ⬜ open |
+| D — full report | ✅ complete; abstention curve landed in Phase H |
+| E — adjudicator | ✅ complete, off by default |
+| G — exception list | ✅ complete |
+| H — abstention curve | ✅ complete (unplanned defect found) |
+| F — surface | 🟡 demo built, holdout run; pitch video outstanding |
 
 
 ### Phase A — data integrity (24 Aug, half a day)
@@ -323,6 +326,13 @@ What is there instead is smaller and does exactly one thing the gates cannot:
   arithmetic in the input.
 - Confidence below a declared floor is recorded as a decline, and declining is
   always available.
+- **The sealed record names the reader.** A model-made claim journals as
+  `adjudication/SUGGESTED by <model>`; a decline the rung reaches on its own
+  rules -- no note, or no call budget -- names nobody, because no reader saw it.
+  Added late, after noticing that confidence and reasoning were in the chain and
+  the actor was not: a swap of the default model would have left the log unable
+  to say which attributions the old one made. Deterministic claims pass no
+  decider, so every published log is byte-identical at a fixed timestamp.
 
 Tiered routing survives in the sense that the model is a constructor argument;
 the default is Haiku 4.5, because the task is a two-way reading comprehension
@@ -340,10 +350,71 @@ families**, reached while still abstaining on the four primary
 
 Abstention remains free and never penalised.
 
-### Phase F — surface (3–5 Sep)
+### Phase F — surface (3–5 Sep) — **demo built**
 
-Demo UI, README via `make stats` (never hand-edited), pitch video. Holdout runs
-**once**, at the start of this phase.
+README via `make stats` (never hand-edited) has been in place since Phase D.
+The demo surface is `make demo`: `src/recon/metrics/dashboard.py` writes
+`runs/demo/index.html` — scoreboard, difficulty floor, per-pass yield, per-gate
+eliminations, the abstention curve, the classification table, the operator queue
+with its evidence, and the run's chain head, for all three families in one file.
+
+**One file, no server, no JavaScript, no network.** The alternative — a small
+web app — was rejected for the reason the rest of this repo keeps choosing:
+a reconciliation result is something you hand to somebody, and a demo that needs
+a running process is broken the day after the deadline. This one opens from
+disk, prints to PDF and attaches to an email.
+
+The two properties that matter are tests, not intentions:
+
+- **It agrees with the terminal.** The page, `make report` and `make exceptions`
+  go through the same `compare()` and the same exception builder.
+  `test_the_page_and_the_terminal_report_agree` renders both surfaces and
+  requires the figures carrying the claim to appear in each. A dashboard is the
+  easiest place in a project to lie by accident — written last, read by people
+  who will not run the commands — and this is what closes that.
+- **It tracks the run.** Rendered from a join-only ladder the page must change,
+  and both its score and its queue must move with it. Without that, every other
+  assertion about the page checks that a constant is still a constant.
+
+Also tested: the page makes no external request and contains no `<script>`;
+evidence text is escaped rather than injected; the markup is well-formed; and
+`render([])` raises rather than emitting an empty dashboard. CI builds the page
+and uploads it as an artifact, so a judge is never the first to find it broken.
+
+Money is formatted from integer paise with `divmod` and manual grouping rather
+than by dividing by 100 — the presentation boundary is exactly where the habit
+of keeping money off floats is usually dropped.
+
+### The holdout — run, and what it actually established
+
+Pre-registered in `tools/holdout.py`, committed before the run so the commit
+order is the evidence. Five contiguous unseen seeds (70001–70005), primary mix,
+frozen ladder, once. Full record in [`HOLDOUT.md`](HOLDOUT.md).
+
+**94/100 on all five, 0.00% false matches, 1.0000 allocation precision** —
+identical to the published primary figure, so nothing was fitted to the batches
+in `data/`.
+
+The result needed interrogating rather than celebrating, and the interrogation
+is the part worth keeping. Five identical scores is not five agreeing draws:
+`PRIMARY_CASE_SHARES` is a fixed partition of 100 cases, so every seed carries
+exactly 6 `DESCRIBED_REFUND` cases and the agent abstains on all six. 94 is
+100 − 6 by construction, on any seed. Reporting the constancy as stability would
+have been reading a structural identity as a measurement.
+
+What did move is the better finding: **D against B2 ranged 8.0% to 13.0% while
+the agent's score, false-match rate and allocation precision did not move at
+all.** Across five unseen batches every bit of seed-to-seed variance sat in the
+guesser and none in the prover. The honest headroom figure is a range, +2 to +7
+cases, rather than the single number either committed family happens to show.
+
+A consequence worth carrying into any future benchmark work: a fixed scenario
+partition makes the headline number insensitive to the seed by design, so seed
+variation cannot be the instrument for measuring generalisation here. What the
+holdout can still establish — and did — is that precision and the false-match
+rate survive contact with data the tolerances were never near.
+
+Still outstanding: the pitch video.
 
 The tamper-evident audit chain has landed: `record_hash =
 SHA256(previous_hash + canonical_json(complete record))`, verified on read, with
@@ -401,8 +472,52 @@ that does not tie out) and abstentions (money that arrived and is not yet
 attributed). On every family the abstentions are the larger number, so a
 combined total would be dominated by the part that is not missing.
 
-Still outstanding: the abstention/coverage curve and the demo surface. If a
-number disappoints it gets reported, not re-tuned.
+### Phase H -- the abstention curve, and the defect it exposed
+
+`precision_coverage_curve` had existed in the scorer, with a test, since the
+metrics module was written. Nothing printed it. Wiring it into `make report`
+was meant to be the last small item on Phase D and instead found the reason it
+had never been missed.
+
+**Case confidence was hardcoded to 1.0 on every resolved path.** The
+adjudicator books SUGGESTED claims at whatever the reader stated, and `_verdict`
+overwrote that with certainty on the way to the scorer. Measured with a reader
+answering at 0.72: fourteen dev claims arrived below 1.0, and every case
+resting on them was published at 1.00. Three consequences, none visible in any
+headline number:
+
+- A line the model guessed at was indistinguishable, in the published record
+  and in the audit log, from one nine gates had proved.
+- The SUGGESTED tier -- adopted from Oracle and BlackLine precisely so the
+  middle tier would stop being invisible -- was invisible in every metric that
+  quotes confidence.
+- The abstention dial was inert. No threshold could move a decision, so the
+  curve would have been flat under every reader, and the flatness would have
+  looked like a property of the engine instead of a bug in the reporting.
+
+A case now carries the **minimum** confidence over the claims holding it up.
+Minimum rather than mean: a case with one proved leg and one guessed leg is a
+guess, and averaging would let the proof launder the guess through an
+operator's threshold filter. A case resting on no claims is a disposition the
+engine reached alone and stays at 1.0.
+
+Every deterministic claim is 1.0, so the published figures are byte-identical
+before and after -- 818 tests green, `make verify` unchanged, the README table
+regenerated to the same numbers. That invariance is what made the fix safe to
+make this late.
+
+On the deterministic ladder the curve is genuinely flat, and the report says so
+in a line **computed from the run** rather than asserted in prose, so a future
+graded rung retires the note by changing the data. Coverage at every threshold:
+0.82 dev, 0.90 primary, 0.84 stress, each at 1.0000 precision and a 0.00%
+false-match rate. Two tests hold the pair of claims that matters: the
+deterministic ladder is certain or absent, and a rung supplying graded
+confidence makes the dial trade coverage for precision in the expected
+direction.
+
+The demo surface that this section left outstanding landed in Phase F; the
+holdout it anticipated landed with it. If a number disappoints it gets reported,
+not re-tuned.
 
 ---
 

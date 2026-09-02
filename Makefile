@@ -1,4 +1,4 @@
-.PHONY: help install data data-large test baseline agent adjudicate report ambiguity audit exceptions stats verify verify-audit clean
+.PHONY: help install data data-large test baseline agent adjudicate report ambiguity audit exceptions demo holdout stats verify verify-audit clean
 
 # Prefer the project venv when one exists. The bare `python3` on PATH is not
 # the interpreter this project's dependencies are installed into on every
@@ -46,8 +46,10 @@ help:
 	@echo "make stats      regenerate the README dataset table from data/"
 	@echo "make audit      write a decision journal per family to runs/"
 	@echo "make exceptions write the operator queue per family to runs/"
+	@echo "make demo       write the self-contained run report to runs/demo/index.html"
+	@echo "make holdout    run the frozen agent on never-seen seeds (once; see tools/holdout.py)"
 	@echo "make verify-audit  re-verify the tamper-evident hash chain of every audit log"
-	@echo "make verify     test + baseline + report + ambiguity + audit chain + exceptions + stats"
+	@echo "make verify     test + baseline + report + ambiguity + audit chain + exceptions + demo + stats"
 	@echo "make clean      remove generated data"
 
 install:
@@ -111,6 +113,23 @@ audit:
 exceptions:
 	@$(PYTHON) -m recon.match.exceptions data/dev data/primary data/stress --out-dir runs
 
+# The demo surface. One HTML file with no server, no build step, no network
+# access and no JavaScript: it opens from disk, prints to PDF and attaches to
+# an email. Every figure on it is computed by the run that writes it, through
+# the same scorer `make report` prints from -- a dashboard that computed its
+# own numbers could flatter the run in ways the terminal never showed, and
+# that agreement is a test rather than a convention.
+demo:
+	@$(PYTHON) -m recon.metrics.dashboard data/dev data/primary data/stress --out runs/demo/index.html
+
+# The holdout. Seeds nothing in this repository has ever generated, scored or
+# looked at, run once against the frozen ladder. Deliberately NOT part of
+# `make verify`: a holdout that runs on every commit is a validation set with
+# a longer name, and the whole value of this one is that its result was seen
+# exactly once, after the protocol in tools/holdout.py was committed.
+holdout:
+	@$(PYTHON) tools/holdout.py
+
 stats:
 	@$(PYTHON) tools/refresh_stats.py
 
@@ -127,7 +146,7 @@ stats:
 verify-audit:
 	@$(PYTHON) -m recon.match.audit runs
 
-verify: test baseline report ambiguity audit exceptions verify-audit stats
+verify: test baseline report ambiguity audit exceptions demo verify-audit stats
 
 clean:
 	@rm -rf data/dev data/primary data/stress data/large runs

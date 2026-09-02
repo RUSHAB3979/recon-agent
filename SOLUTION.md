@@ -168,8 +168,9 @@ pricing rules              ▼
                      global allocation survives all nine
                            │ still ambiguous
                            ▼
-                  4. LLM adjudicator            proposes which record to TEST;
-                     the deterministic engine decides whether it passes
+                  4. Evidence reader            names which admissible candidate
+                     the settlement note is about, or declines.
+                     OFF BY DEFAULT; no published number depends on it
                            │
                            ▼
                   5. Exception classifier       named categories, not a total
@@ -253,32 +254,94 @@ the whole design, compressed into one sentence.
 
 ## 6. Where the model fits
 
-The model never computes. It is a **tool-using agent** whose tools are the
-deterministic engine:
+The model never computes. It reads one sentence and answers with one letter.
+
+### The tool surface I designed, and then cut
+
+The plan was a tool-using agent whose tools were the deterministic engine —
+`get_candidates`, `verify_allocation`, `check_control_equations`, `explain` —
+so that "no LLM arithmetic" would be enforced by the model having no way to do
+any. It is a good-sounding design and I dropped it, which is worth explaining
+because the reasoning is the same one that runs through the whole project.
+
+Giving the model tools presumes there is something left to look up. By the time
+a line reaches this rung, the nine gates have already verified the amount to the
+paise, the date window, the currency, the lineage, the control equations and
+global feasibility — **for every surviving candidate**. A `verify_allocation`
+call could only return what gate 2 through gate 8 already proved. The tool
+surface would have been real code, real latency and real tokens buying no
+decision that depended on it. That is theatre, and theatre in the part of the
+system that is supposed to be the trustworthy part.
+
+So the rung got smaller and does exactly one thing the gates cannot.
+
+### What actually ships
+
+`EvidenceReader` is a one-method protocol and the reader is injected. Three
+implementations exist: a **declining** reader (the default), an **Anthropic**
+reader, and a **scripted** one for tests.
 
 ```
-get_candidates(delta, window)     -> shortlist of admissible records
-verify_allocation(event, settle)  -> bool   # runs all nine gates, integer paise
-check_control_equations(case)     -> which equations close, which do not
-explain(case)                     -> natural-language reasoning for a human
+the gates decide      WHICH CANDIDATES ARE ADMISSIBLE
+this rung decides     WHICH ADMISSIBLE CANDIDATE THE EVIDENCE NAMES
 ```
 
-It cannot compute a sum. It can only ask whether one holds. That makes
-**"no LLM arithmetic" structural rather than aspirational** — the model proposes
-which record to test, and the engine alone decides whether the test passes.
+Four properties are structural rather than promised, and each has a test:
+
+- **It never sees a resolved case.** The runner hands it the abstention list,
+  which cannot be widened from inside the rung.
+- **It answers from a closed list.** Candidates are lettered; a letter outside
+  the shortlist is discarded, not repaired. It cannot name an event the gates
+  never admitted.
+- **There is no arithmetic in the input.** Amounts and dates are absent from the
+  prompt, because every candidate matched the delta exactly and they carry no
+  discriminating information. This is what makes "no LLM arithmetic" structural
+  here — not a tool boundary, but an empty one: there is nothing to compute.
+- **Abstention survives.** Confidence below a declared floor is recorded as a
+  decline, and declining is always available.
+
+The rung is **off by default** (`--adjudicate`) and contributes to no published
+number. With the declining reader the pipeline reproduces the deterministic
+figures exactly, and that equality is a test.
 
 ### Division of labour
 
 | The model does | The model may never |
 |---|---|
-| Propose which candidate to test | Compute or compare amounts |
-| Read evidence a rule cannot express | Assert a match without tool verification |
-| Write the operator-facing explanation | Break a tie |
-| Decline, and say why | Overrule an abstention |
+| Say which candidate a note is about | Compute or compare amounts |
+| Read evidence a rule cannot express | Name a candidate the gates did not admit |
+| Decline, and say why | Break a tie the gates left standing |
+| — | Overrule an abstention, or see a resolved case |
 
-**Tiered routing**, because capability should be spent where a false match is
-expensive: a cheap model for exception classification and explanation writing, a
-frontier model only for genuine ties. Cost per 500 records is reported.
+### Who decided, in the record
+
+A model-made attribution is sealed into the audit chain with its confidence, its
+reasoning **and the reader that produced it** — `adjudication/SUGGESTED by
+claude-haiku-4-5-20251001`. Confidence and reasoning alone say what was
+concluded, not whose judgement it was, and after a model swap the log could not
+answer which attributions the old one made. Declines the rung makes on its own
+rules — no note to read, or no call budget left — name nobody, because no reader
+saw them.
+
+### Cost
+
+One model, not a tier ladder. The default is Haiku 4.5: the task is a two-way
+reading-comprehension question over one sentence, and paying Opus rates for it
+would be a cost-metric own-goal. Tiered routing survives only in the sense that
+the model is a constructor argument. Cost is metered per call — input, output
+and cached tokens — and printed by the command that incurs it, with the stable
+system prompt marked cacheable so the reported figure is not flattered by
+paying full price for the same preamble every line.
+
+### What has not been measured
+
+**The rung has never run against a live model in this repo.** Every end-to-end
+figure is either the declining floor or a reader answering from the answer key,
+which bounds the plumbing at 100/100 on all three families and is not a forecast
+of model accuracy. The achievable band on primary is **94 to 100**, and where a
+real model lands inside it is an empirical question this repo answers by running
+the command, not by asserting it. Cost per batch is metered but has never
+carried a number from a real call.
 
 ---
 
@@ -317,6 +380,18 @@ per-scenario breakdown; `NO_ACTION` false-positive rate; exception precision and
 recall per category; throughput; model call rate; **cost per 500 records**; and
 precision as a **curve** across abstention thresholds rather than a single point,
 because coverage and correctness trade off and the operator chooses where to sit.
+
+That curve is **flat** on the deterministic ladder — 0.82, 0.90 and 0.84
+coverage at 1.0000 precision, at every threshold — and the flatness is the
+finding rather than a missing measurement. The engine emits two confidences, 1.0
+when the nine gates leave one survivor and 0.0 when it abstains, so no threshold
+moves a decision: there is no ranked middle to spend. The dial is real only on
+the evidence-reading rung. Getting it to move at all required fixing a defect
+worth recording — case confidence was hardcoded to 1.0 on every resolved path,
+so a line the model had guessed at was published as though nine gates had proved
+it. A case now carries the **minimum** confidence of the claims holding it up,
+because averaging would let one proved leg launder a guessed one through an
+operator's threshold filter.
 
 **No figure appears in this document that was not produced by a command in the
 repository.** The README table is generated by `make stats` and is not editable

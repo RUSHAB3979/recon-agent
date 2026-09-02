@@ -36,6 +36,7 @@ from recon.match.normalize import load_batch
 from recon.match.passes import JOIN_ONLY_LADDER
 from recon.match.recovery import (
     RECOVERY_WINDOW_DAYS,
+    CandidateGraph,
     Gate,
     RefundCorroborationPass,
     maximum_matching,
@@ -394,3 +395,92 @@ def test_the_rung_is_deterministic_across_runs(scene):
     assert [a.candidate_event_ids for a in again.abstentions] == [
         a.candidate_event_ids for a in result.abstentions
     ]
+
+
+
+# --------------------------------------------------------------------------
+# the premise gate 8's decomposition rests on
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "adjacency,right",
+    [
+        ({}, frozenset()),
+        ({"a": []}, frozenset()),
+        ({"a": ["1"]}, frozenset({"1"})),
+        ({"a": ["1"], "b": ["1"]}, frozenset({"1"})),
+        ({"a": ["1", "2"], "b": ["1", "2"]}, frozenset({"1", "2"})),
+        # Two clusters that share nothing: the case the decomposition exists for.
+        (
+            {"a": ["1"], "b": ["1"], "c": ["2", "3"], "d": ["3"]},
+            frozenset({"1", "2", "3"}),
+        ),
+        # A chain that must NOT be split: a-1-b-2-c is one component.
+        (
+            {"a": ["1"], "b": ["1", "2"], "c": ["2"]},
+            frozenset({"1", "2"}),
+        ),
+    ],
+)
+def test_the_component_baselines_sum_to_the_global_baseline(adjacency, right):
+    """Gate 8 re-solves inside one component. This is why that is the same question.
+
+    A maximum matching of a disconnected graph is the union of maximum matchings
+    of its components, so forcing an edge perturbs only its own component and
+    every other one still contributes its own baseline unchanged. The whole
+    optimisation is that identity; if it ever stops holding, the gate would
+    quietly start admitting candidates on arithmetic that no longer applies.
+    """
+    graph = CandidateGraph.build(adjacency, right)
+    assert graph.baseline == len(maximum_matching(adjacency, right))
+
+
+@pytest.mark.parametrize("family", FAMILIES)
+def test_the_decomposition_holds_on_real_batches(tmp_path_factory, family):
+    """The same identity, on the graphs the engine actually builds."""
+    directory = tmp_path_factory.mktemp(f"graph-{family.value}")
+    write_dataset(generate(GenConfig(n_records=500, seed=42, family=family)), directory)
+    batch = load_batch(directory)
+
+    rung = RefundCorroborationPass()
+    rung.run(batch, frozenset())
+    graph = rung.last_graph
+    assert graph is not None
+    assert graph.baseline == len(
+        maximum_matching(graph.adjacency, graph.right_nodes)
+    )
+    assert graph.component_count >= 1
+
+
+def test_forcing_an_edge_agrees_with_a_whole_graph_re_solve():
+    """The component answer and the whole-graph answer must agree, edge for edge.
+
+    This is the property the optimisation claims, checked directly rather than
+    inferred from the sum identity above -- on a graph built so that a wrong
+    answer is possible: two clusters, one of which has a candidate that strands
+    another line and one of which does not.
+    """
+    adjacency = {
+        "line_a": ["evt_1", "evt_2"],
+        "line_b": ["evt_1"],
+        "line_c": ["evt_3"],
+        "line_d": ["evt_3"],
+    }
+    right = frozenset({"evt_1", "evt_2", "evt_3"})
+    graph = CandidateGraph.build(adjacency, right)
+    baseline = len(maximum_matching(adjacency, right))
+
+    for detail_id, candidates in adjacency.items():
+        for event_id in candidates:
+            residual = {
+                other: [c for c in cands if c != event_id]
+                for other, cands in adjacency.items()
+                if other != detail_id
+            }
+            whole = len(maximum_matching(residual, right - {event_id})) == baseline - 1
+            assert graph.residual_reaches_baseline(detail_id, event_id) is whole, (
+                f"{detail_id}->{event_id}: component says "
+                f"{graph.residual_reaches_baseline(detail_id, event_id)}, "
+                f"whole graph says {whole}"
+            )

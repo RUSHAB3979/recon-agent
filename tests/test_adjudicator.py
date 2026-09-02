@@ -541,3 +541,245 @@ def test_default_reader_is_the_null_one_without_a_key(monkeypatch) -> None:
 
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     assert isinstance(default_reader(), DecliningReader)
+
+
+# --------------------------------------------------------------------------
+# the second provider, and what it is not allowed to change
+# --------------------------------------------------------------------------
+
+
+class _FakeHTTP:
+    """A stand-in for urllib.urlopen: records the request, returns a body."""
+
+    def __init__(self, body: str, *, fail: Exception | None = None) -> None:
+        self._body = body
+        self._fail = fail
+        self.requests: list[object] = []
+
+    def __call__(self, request, timeout=None):  # noqa: ANN001 - urlopen shape
+        self.requests.append(request)
+        if self._fail is not None:
+            raise self._fail
+        payload = self._body
+
+        class _Response:
+            def read(self_inner):
+                return payload.encode("utf-8")
+
+            def __enter__(self_inner):
+                return self_inner
+
+            def __exit__(self_inner, *exc):
+                return False
+
+        return _Response()
+
+
+def _chat_body(label, confidence, reasoning="the note names the product"):
+    import json as _json
+
+    return _json.dumps(
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": _json.dumps(
+                            {
+                                "label": label,
+                                "confidence": confidence,
+                                "reasoning": reasoning,
+                            }
+                        )
+                    }
+                }
+            ],
+            "usage": {"prompt_tokens": 480, "completion_tokens": 32},
+        }
+    )
+
+
+def _openrouter(body, **kwargs):
+    from recon.match.adjudicator import OpenRouterReader
+
+    http = _FakeHTTP(body, **kwargs)
+    reader = OpenRouterReader(api_key="test-key", opener=http)
+    return reader, http
+
+
+def test_the_openrouter_reader_parses_a_structured_verdict(residual) -> None:
+    _batch, _run, abstentions = residual
+    from recon.match.adjudicator import build_request
+    from recon.match.normalize import load_batch
+
+    batch, _run2, abstentions = residual
+    request = next(
+        req
+        for req in (
+            build_request(batch, line, a.candidate_event_ids)
+            for a in abstentions
+            for line in batch.details
+            if line.detail_id == a.detail_id
+        )
+        if req is not None and req.note
+    )
+
+    reader, http = _openrouter(_chat_body(request.candidates[0].label, 0.83))
+    verdict = reader.read(request)
+
+    assert verdict.label == request.candidates[0].label
+    assert verdict.confidence == pytest.approx(0.83)
+    assert verdict.usage.calls == 1
+    assert verdict.usage.input_tokens == 480
+    assert len(http.requests) == 1
+
+
+def test_a_fenced_code_block_still_parses(residual) -> None:
+    """Models behind OpenRouter honour a JSON schema with varying enthusiasm."""
+    import json as _json
+
+    batch, _run, abstentions = residual
+    from recon.match.adjudicator import build_request
+
+    request = next(
+        req
+        for req in (
+            build_request(batch, line, a.candidate_event_ids)
+            for a in abstentions
+            for line in batch.details
+            if line.detail_id == a.detail_id
+        )
+        if req is not None and req.note
+    )
+
+    inner = _json.dumps({"label": "A", "confidence": 0.9, "reasoning": "x"})
+    fenced = _json.dumps(
+        {"choices": [{"message": {"content": f"```json\n{inner}\n```"}}]}
+    )
+    reader, _http = _openrouter(fenced)
+    assert reader.read(request).label == "A"
+
+
+def test_an_unparseable_openrouter_body_declines(residual) -> None:
+    batch, _run, abstentions = residual
+    from recon.match.adjudicator import build_request
+
+    request = next(
+        req
+        for req in (
+            build_request(batch, line, a.candidate_event_ids)
+            for a in abstentions
+            for line in batch.details
+            if line.detail_id == a.detail_id
+        )
+        if req is not None and req.note
+    )
+
+    reader, _http = _openrouter('{"choices": [{"message": {"content": "sure!"}}]}')
+    verdict = reader.read(request)
+    assert verdict.label is None
+    assert verdict.confidence == 0.0
+
+
+def test_an_openrouter_transport_failure_declines_the_line_not_the_batch(residual) -> None:
+    batch, _run, abstentions = residual
+    from recon.match.adjudicator import build_request
+
+    request = next(
+        req
+        for req in (
+            build_request(batch, line, a.candidate_event_ids)
+            for a in abstentions
+            for line in batch.details
+            if line.detail_id == a.detail_id
+        )
+        if req is not None and req.note
+    )
+
+    reader, _http = _openrouter("", fail=OSError("connection reset"))
+    verdict = reader.read(request)
+    assert verdict.label is None
+    assert "routed to human review" in verdict.reasoning
+
+
+def test_the_openrouter_request_carries_no_arithmetic(residual) -> None:
+    """The structural property has to hold for every provider, not the first one.
+
+    Amounts and dates are absent from the prompt because every candidate matched
+    the delta exactly -- they carry no discriminating information, and showing
+    them invites a fabricated numeric justification. A second reader that leaked
+    them would reopen exactly that door.
+    """
+    batch, _run, abstentions = residual
+    from recon.match.adjudicator import build_request
+
+    request = next(
+        req
+        for req in (
+            build_request(batch, line, a.candidate_event_ids)
+            for a in abstentions
+            for line in batch.details
+            if line.detail_id == a.detail_id
+        )
+        if req is not None and req.note
+    )
+
+    reader, http = _openrouter(_chat_body("A", 0.9))
+    reader.read(request)
+    sent = http.requests[0].data.decode("utf-8")
+
+    assert request.note[:20] in sent
+    for candidate in request.candidates:
+        assert candidate.parent_description[:12] in sent
+    for line in batch.details:
+        if line.detail_id == request.detail_id:
+            assert str(abs(line.net_effect_paise)) not in sent
+            assert line.settled_at.date().isoformat() not in sent
+
+
+def test_reader_selection_prefers_anthropic_then_openrouter(monkeypatch) -> None:
+    from recon.match.adjudicator import (
+        AnthropicReader,
+        DecliningReader,
+        OpenRouterReader,
+        default_reader,
+    )
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    assert isinstance(default_reader(), DecliningReader)
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    assert isinstance(default_reader(), OpenRouterReader)
+
+
+def test_a_hallucinated_label_from_openrouter_is_still_discarded(residual) -> None:
+    """A new provider cannot introduce a new way to be wrong about money.
+
+    The closed-list guard lives on the rung, not the reader, so a reader that
+    names an event the gates never admitted costs an abstention rather than a
+    false attribution. Asserted here for the second provider because "the
+    safety property is structural" is a claim about where the code lives, and
+    this is the cheapest way to keep it true.
+    """
+    batch, _run, abstentions = residual
+    from recon.match.adjudicator import AdjudicationPass, build_request
+
+    eligible = [
+        a
+        for a in abstentions
+        if (
+            req := build_request(
+                batch,
+                next(l for l in batch.details if l.detail_id == a.detail_id),
+                a.candidate_event_ids,
+            )
+        )
+        is not None
+        and req.note
+    ]
+    assert eligible
+
+    reader, _http = _openrouter(_chat_body("Z", 0.99))
+    result = AdjudicationPass(reader).run_residual(batch, frozenset(), eligible)
+    assert result.claims == []
+    assert len(result.abstentions) == len(eligible)
