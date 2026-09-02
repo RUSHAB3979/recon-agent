@@ -120,6 +120,18 @@ make demo          # write runs/demo/index.html -- the whole run, as one page
 make holdout       # run the frozen agent on never-seen seeds (see docs/HOLDOUT.md)
 ```
 
+For the four-minute demo — six screens, every figure computed live, no network
+and no API key on the critical path:
+
+```bash
+./tools/pitch.sh --check    # eleven preflight checks, run before presenting
+./tools/pitch.sh            # Enter to advance
+```
+
+The spoken script, the expected output of each beat, the questions a reviewer
+asks and what to do when a command misbehaves are in
+[`docs/PITCH.md`](docs/PITCH.md).
+
 The evidence-reading rung is opt-in and never contributes to a published
 number:
 
@@ -669,7 +681,9 @@ tools/refresh_stats.py  regenerates the README table from data/
 docs/DATA_SPEC.md       schema, scenario classes, guarantees, limitations
 docs/BUILD_PLAN.md      phase status and what is deliberately not built
 docs/HOLDOUT.md         the pre-registered holdout run and its honest reading
-docs/ADVERSARIAL_REVIEW.md  hostile pass: six findings, five fixed, one measured
+docs/ADVERSARIAL_REVIEW.md  hostile pass: six findings, all six fixed
+docs/PITCH.md           the four-minute demo runbook and spoken script
+tools/pitch.sh          drives it: --check, then Enter to advance
 docs/superpowers/specs/ the authoritative benchmark design record
 data/dev/               development family (the only tuning surface)
 data/primary/           headline batch      (never tune here)
