@@ -97,6 +97,7 @@ __all__ = [
     "DecliningReader",
     "EvidenceReader",
     "OpenRouterReader",
+    "DEFAULT_MAX_TOKENS",
     "ScriptedReader",
     "Usage",
     "build_request",
@@ -124,6 +125,20 @@ DEFAULT_OPENROUTER_MODEL = "anthropic/claude-haiku-4.5"
 # policy rather than a fitted threshold, and it is tuned -- if at all -- against
 # data/dev only.
 DEFAULT_MIN_CONFIDENCE = 0.70
+
+# Output budget for one verdict. The verdict itself is a letter, a float and a
+# sentence -- a hundred tokens is generous. The budget is not sized for the
+# verdict, it is sized for what a reasoning model emits BEFORE the verdict.
+#
+# Measured, not guessed: at 512 tokens, three of the free models tried spent the
+# entire budget thinking and returned no verdict at all, which this reader then
+# recorded as "model returned no parseable verdict". That reason is a lie. The
+# model was not incapable of answering; it was cut off mid-sentence by a
+# constant in this file, and the exception queue would have carried a
+# measurement artefact as if it were a property of the model. A number this
+# repository publishes about model behaviour must not be an artefact of its own
+# request budget, so the budget is a parameter with room in it.
+DEFAULT_MAX_TOKENS = 2048
 
 # Letters, not event ids, are what the model answers with. An id is a token
 # sequence a model can plausibly complete into something that does not exist; a
@@ -194,8 +209,20 @@ class AdjudicationRequest:
     candidates: tuple[Candidate, ...]
 
     def candidate_by_label(self, label: str) -> Candidate | None:
+        """Exact membership in the closed list, tolerant only of spelling.
+
+        Case and surrounding whitespace are normalised, because a model that
+        answers ``a`` for candidate ``A`` has named a candidate, and discarding
+        that would understate the rung for a formatting reason. What is NOT
+        tolerated is anything that would have to be REPAIRED into a letter --
+        ``Candidate A``, ``A (the jeans)``, ``B or C``. Those are discarded,
+        because the difference between reading a letter and inferring one is the
+        entire guarantee this method exists to provide.
+        """
+
+        wanted = label.strip().casefold()
         for candidate in self.candidates:
-            if candidate.label == label:
+            if candidate.label.casefold() == wanted:
                 return candidate
         return None
 
@@ -453,12 +480,39 @@ class AnthropicReader:
         confidence = payload.get("confidence", 0.0)
         return Adjudication(
             detail_id=request.detail_id,
-            label=label if isinstance(label, str) else None,
+            label=_label_or_abstention(label),
             confidence=float(confidence) if isinstance(confidence, (int, float)) else 0.0,
             reasoning=str(payload.get("reasoning", "")),
             model=self.model,
             usage=recorded,
         )
+
+
+# Spellings of "I decline" that arrive as a string rather than as JSON null.
+# The response schema types `label` as ["string", "null"] and the prompt asks
+# for null, and models write the word anyway.
+_ABSTENTION_SPELLINGS = frozenset({"", "null", "none", "nil", "n/a", "abstain"})
+
+
+def _label_or_abstention(label: object) -> str | None:
+    """Normalise a decline spelled as a word into a real abstention.
+
+    This is NOT leniency about which candidate was named. The closed-list guard
+    still discards any label the shortlist does not contain, so neither spelling
+    could ever have produced a match -- no money moves either way. What is at
+    stake is whether the report tells the truth about WHY it did not.
+
+    A model that declines by writing "null" behaved exactly as asked. Recording
+    that as "named something that is not a candidate" files a correct refusal
+    under hallucination, and that bucket is the one a panel reads as this rung's
+    error rate. Two opposite behaviours must not share a counter -- the whole
+    argument for the rung is that abstention is a feature, and a metric that
+    cannot distinguish abstention from fabrication cannot support that argument.
+    """
+
+    if not isinstance(label, str):
+        return None
+    return None if label.strip().casefold() in _ABSTENTION_SPELLINGS else label
 
 
 def _transport_failure(error: Exception) -> str | None:
@@ -545,6 +599,7 @@ class OpenRouterReader:
         model: str = DEFAULT_OPENROUTER_MODEL,
         api_key: str | None = None,
         timeout: float = 30.0,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
         endpoint: str | None = None,
         opener: object | None = None,
     ) -> None:
@@ -554,6 +609,7 @@ class OpenRouterReader:
         self._key = key
         self.model = model
         self._timeout = timeout
+        self._max_tokens = max_tokens
         self._endpoint = endpoint or self.ENDPOINT
         # Injected in tests so the transport can be exercised without a network
         # call. Production passes nothing and gets urllib.
@@ -570,7 +626,7 @@ class OpenRouterReader:
                 detail_id=request.detail_id,
                 label=None,
                 confidence=0.0,
-                reasoning=f"adjudicator unreachable ({type(error).__name__}); routed to human review",
+                reasoning=f"adjudicator unreachable ({_http_failure(error)}); routed to human review",
                 model=self.model,
                 usage=Usage(calls=1),
             )
@@ -587,7 +643,7 @@ class OpenRouterReader:
                     {"role": "user", "content": render_request(request)},
                 ],
                 "temperature": 0,
-                "max_tokens": 512,
+                "max_tokens": self._max_tokens,
                 "response_format": {
                     "type": "json_schema",
                     "json_schema": {
@@ -637,12 +693,44 @@ class OpenRouterReader:
         confidence = verdict.get("confidence", 0.0)
         return Adjudication(
             detail_id=request.detail_id,
-            label=label if isinstance(label, str) else None,
+            label=_label_or_abstention(label),
             confidence=float(confidence) if isinstance(confidence, (int, float)) else 0.0,
             reasoning=str(verdict.get("reasoning", "")),
             model=self.model,
             usage=usage,
         )
+
+
+def _http_failure(error: Exception) -> str:
+    """Describe an HTTP failure specifically enough to act on it.
+
+    ``HTTPError`` on its own is not a reason, it is a category, and it went into
+    the audit trail as one. The operator reading that row has to decide between
+    three different actions -- wait, top up the account, or fix the model slug --
+    and the status code is what separates them. OpenRouter also names the
+    upstream provider in the body, which distinguishes "this account is out of
+    quota" from "somebody else saturated the shared free pool", a difference
+    that was misdiagnosed as the former when it was the latter.
+
+    The body is read defensively: this runs on an error path, and a reader that
+    raises while explaining a failure turns a declined line into a crashed batch.
+    """
+
+    import urllib.error
+
+    if not isinstance(error, urllib.error.HTTPError):
+        return type(error).__name__
+
+    detail = f"HTTP {error.code}"
+    try:
+        body = json.loads(error.read().decode("utf-8"))
+        metadata = body.get("error", {}).get("metadata", {})
+        provider = metadata.get("provider_name")
+        if provider:
+            detail = f"{detail} from {provider}"
+    except Exception:  # noqa: BLE001 - never fail while describing a failure
+        pass
+    return detail
 
 
 def _openrouter_verdict(payload: Mapping[str, object]) -> dict[str, object] | None:
@@ -684,6 +772,14 @@ def default_reader() -> EvidenceReader:
     written against; OpenRouter otherwise. A construction failure falls back to
     declining rather than raising: a missing key or a broken client should cost
     the residual, not the batch.
+
+    ``OPENROUTER_MODEL`` overrides the slug. This exists so that reproducing a
+    published measurement never requires editing this file: the default is a
+    paid model, an OpenRouter key with no credit can only reach ``:free`` slugs,
+    and a reader whose model is a source constant makes "run it yourself" mean
+    "fork it first". Naming the model is also what makes a reported number
+    checkable -- a cost or accuracy figure is meaningless without it, and the
+    reader already carries ``self.model`` into the audit record.
     """
 
     if os.environ.get("ANTHROPIC_API_KEY"):
@@ -693,7 +789,8 @@ def default_reader() -> EvidenceReader:
             return DecliningReader()
     if os.environ.get("OPENROUTER_API_KEY"):
         try:
-            return OpenRouterReader()
+            model = os.environ.get("OPENROUTER_MODEL") or DEFAULT_OPENROUTER_MODEL
+            return OpenRouterReader(model=model)
         except Exception:  # pragma: no cover - construction failure
             return DecliningReader()
     return DecliningReader()

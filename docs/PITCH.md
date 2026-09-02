@@ -6,8 +6,9 @@ part of the pitch.
 
 - **Driver:** `./tools/pitch.sh` (Enter to advance), `--auto` to record,
   `--check` before you walk on.
-- **Total runtime of the commands:** under three seconds. The talking is the
-  slow part, which is the way round you want it.
+- **Total runtime of the commands:** about four seconds for all seven, of
+  which the holdout is one and a half. The talking is the slow part, which is
+  the way round you want it.
 - **Nothing on the critical path needs a network or an API key.** If the venue
   wifi dies, the demo does not.
 
@@ -149,10 +150,20 @@ the ones that land.
 > and contributes to no number on that screen.
 
 **"So you've never run it against a real model?"**
-> Correct, and it's the biggest gap in the submission. Two readers ship, the
-> protocol is one method, and a scripted oracle bounds the plumbing at 100/100.
-> What we haven't got is a measured model number, and I'd rather say that than
-> show you one I invented.
+> We have now, once, on dev — and I'd rather give you the sample size than the
+> headline. It read 28 lines, claimed 15, and the answer key agreed with 15 of
+> 15. Dev goes 90 to 96, and the false-match column stays on zero. That's a
+> 2.6-billion-parameter free model, so the cost per batch is nil.
+>
+> What I still don't have is a number on the primary set — the free tier's daily
+> cap cut it off. And fifteen-for-fifteen is fifteen. It's a real result on a
+> small sample, not a claim about models.
+>
+> The throttled run was worth more than the number would have been, though: with
+> the model unreachable on fifteen of sixteen lines, primary came back at exactly
+> the deterministic 94 and 0.00% false match. Every line the model didn't reach
+> became an exception with a reason. **We'd asserted that in a docstring; now
+> we've watched it happen.**
 
 **"It's all synthetic."**
 > Yes, and the same code wrote the defects and the labels — it's in the README
@@ -183,4 +194,4 @@ the ones that land.
 | `data/` missing | `make data` — 3 seconds, and CI proves it regenerates byte-for-byte. |
 | Terminal too small | Beats 1 and 3 are the long ones. `--auto` won't help; shrink the font before starting. |
 | Badly over time | Cut screen 1 and open on screen 2 — say "B2, a slightly longer SQL script, scores 89 with 16 false matches" and carry on. |
-| Asked to prove it's live | Re-run any beat. Or `make verify` — 16 seconds, 876 tests, every published number recomputed. |
+| Asked to prove it's live | Re-run any beat — each is under two seconds. `make verify` recomputes every published number across 876 tests, but it takes about a minute warm and longer cold, so offer it for after, not on the clock. |

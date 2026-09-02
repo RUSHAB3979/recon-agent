@@ -783,3 +783,129 @@ def test_a_hallucinated_label_from_openrouter_is_still_discarded(residual) -> No
     result = AdjudicationPass(reader).run_residual(batch, frozenset(), eligible)
     assert result.claims == []
     assert len(result.abstentions) == len(eligible)
+
+
+# --------------------------------------------------------------------------
+# What a live run exposed on 2026-09-02
+#
+# Three defects, none of which could move money -- the closed-list guard and
+# the confidence floor sit downstream of all three -- and all of which made the
+# report say something untrue about WHY a line went to a human. In a tool whose
+# central claim is "an honest exception list", that is the failure that counts.
+# --------------------------------------------------------------------------
+
+
+def test_the_output_budget_is_a_parameter_and_reaches_the_wire() -> None:
+    """At 512 the reasoning models never got to the verdict.
+
+    The budget has to be sized for the preamble, not for the answer, and a
+    constant in the module cannot know how long a given model thinks for.
+    """
+
+    import json as _json
+
+    from recon.match.adjudicator import DEFAULT_MAX_TOKENS, OpenRouterReader
+
+    http = _FakeHTTP(_chat_body("A", 0.9))
+    OpenRouterReader(api_key="k", opener=http, max_tokens=4096).read(_request())
+    sent = _json.loads(http.requests[0].data.decode("utf-8"))
+    assert sent["max_tokens"] == 4096
+
+    http = _FakeHTTP(_chat_body("A", 0.9))
+    OpenRouterReader(api_key="k", opener=http).read(_request())
+    sent = _json.loads(http.requests[0].data.decode("utf-8"))
+    assert sent["max_tokens"] == DEFAULT_MAX_TOKENS
+    assert DEFAULT_MAX_TOKENS > 512, "512 was measured to truncate reasoning models"
+
+
+def test_a_declined_line_names_the_http_failure_it_died_of() -> None:
+    """"HTTPError" is a category, not a reason.
+
+    Three different operator actions hide behind it -- wait, top up, fix the
+    slug -- and the status code is what separates them.
+    """
+
+    import io
+    import json as _json
+    import urllib.error
+
+    body = _json.dumps(
+        {"error": {"code": 429, "metadata": {"provider_name": "Decart"}}}
+    ).encode("utf-8")
+    failure = urllib.error.HTTPError(
+        "https://openrouter.ai", 429, "Too Many Requests", {}, io.BytesIO(body)
+    )
+
+    reader, _http = _openrouter(_chat_body("A", 0.9), fail=failure)
+    verdict = reader.read(_request())
+
+    assert verdict.label is None
+    assert "429" in verdict.reasoning
+    assert "Decart" in verdict.reasoning, "the shared free pool, not this account"
+
+
+def test_describing_a_failure_never_raises_a_second_one() -> None:
+    """The error path must survive an error body it cannot parse."""
+
+    import io
+    import urllib.error
+
+    failure = urllib.error.HTTPError(
+        "https://openrouter.ai", 502, "Bad Gateway", {}, io.BytesIO(b"<html>nope")
+    )
+    reader, _http = _openrouter(_chat_body("A", 0.9), fail=failure)
+    verdict = reader.read(_request())
+
+    assert verdict.label is None
+    assert "502" in verdict.reasoning
+
+
+def test_a_null_spelled_as_a_word_is_an_abstention_not_a_hallucination() -> None:
+    """Observed live: two free models declined correctly, in prose.
+
+    Both wrote the string "null" against a schema that types the field
+    ["string", "null"]. The closed list already stopped it becoming a match;
+    what it did not stop was it being counted as a fabricated label.
+    """
+
+    for spelling in ("null", "NULL", " none ", "", "n/a", "abstain"):
+        reader, _http = _openrouter(_chat_body(spelling, 0.92))
+        verdict = reader.read(_request())
+        assert verdict.label is None, spelling
+
+
+def test_a_real_fabrication_is_still_reported_as_one() -> None:
+    """Normalising "null" must not become normalising everything."""
+
+    reader, _http = _openrouter(_chat_body("Z", 0.99))
+    verdict = reader.read(_request())
+
+    assert verdict.label == "Z", "passed through, so the rung can count it"
+    assert _request().candidate_by_label("Z") is None, "and refused there"
+
+
+def test_the_closed_list_tolerates_case_but_never_repair() -> None:
+    request = _request()
+    offered = request.candidates[0].label
+
+    assert request.candidate_by_label(offered.lower()) is not None
+    assert request.candidate_by_label(f"  {offered}  ") is not None
+
+    # Anything that has to be INFERRED into a letter is not a letter.
+    for decorated in (f"Candidate {offered}", f"{offered}.", f"{offered} or B"):
+        assert request.candidate_by_label(decorated) is None, decorated
+
+
+def test_the_openrouter_model_can_be_named_by_environment(monkeypatch) -> None:
+    """Reproducing a published number must not require editing source."""
+
+    from recon.match.adjudicator import DEFAULT_OPENROUTER_MODEL
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+
+    monkeypatch.setenv("OPENROUTER_MODEL", "vendor/some-model:free")
+    assert default_reader().model == "vendor/some-model:free"
+
+    monkeypatch.delenv("OPENROUTER_MODEL")
+    assert default_reader().model == DEFAULT_OPENROUTER_MODEL

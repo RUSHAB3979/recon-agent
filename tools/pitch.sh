@@ -24,7 +24,21 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 export PYTHONPATH=src
-PY="${PYTHON:-python3}"
+# Prefer the project venv, for exactly the reason the Makefile does: the bare
+# `python3` on PATH is not the interpreter this project's dependencies are
+# installed into on every machine. A preflight that opens with a red FAIL
+# because it asked the wrong interpreter reports a broken toolchain as a broken
+# project -- on stage, thirty seconds before you start talking. $PYTHON still
+# wins when it is set, so a deliberate choice is never overridden.
+if [ -n "${PYTHON:-}" ]; then
+  PY="$PYTHON"
+elif [ -x .venv/bin/python ]; then
+  PY=.venv/bin/python
+elif [ -x .venv/Scripts/python.exe ]; then
+  PY=.venv/Scripts/python.exe
+else
+  PY=python3
+fi
 
 AUTO=0
 PAUSE=6
@@ -60,6 +74,7 @@ hold() {
 if [ "${MODE:-}" = "check" ]; then
   fail=0
   bold "Preflight"
+  dim  "interpreter: $PY"
   printf '\n'
 
   check() {  # check "<label>" "<command>"

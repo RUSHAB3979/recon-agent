@@ -333,15 +333,27 @@ and cached tokens — and printed by the command that incurs it, with the stable
 system prompt marked cacheable so the reported figure is not flattered by
 paying full price for the same preamble every line.
 
-### What has not been measured
+### What has and has not been measured
 
-**The rung has never run against a live model in this repo.** Every end-to-end
-figure is either the declining floor or a reader answering from the answer key,
-which bounds the plumbing at 100/100 on all three families and is not a forecast
-of model accuracy. The achievable band on primary is **94 to 100**, and where a
-real model lands inside it is an empirical question this repo answers by running
-the command, not by asserting it. Cost per batch is metered but has never
-carried a number from a real call.
+The rung has now run against a live model, on `data/dev`, once — the protocol,
+the result and the caveats are in `docs/LIVE_MODEL.md`. It examined 28 lines,
+claimed 15, and the answer key agreed with **15 of 15**: 90/100 to **96/100**,
+allocation recall .9512 to **.9878**, false-match rate **0.00% on both rows**.
+Six cases closed, none wrongly.
+
+What that is not: a claim about models in general, about run-to-run stability,
+or about `data/primary`, which still has **no live number** — the free tier's
+daily cap ended the attempt after fifteen of sixteen calls came back
+rate-limited. Every other end-to-end figure in this repository remains either
+the declining floor or a reader answering from the answer key, which bounds the
+plumbing at 100/100 and is not a forecast of model accuracy. The achievable band
+on primary is **94 to 100** and where a model lands inside it is still open.
+
+The throttled attempt is worth its own line, because it tested a property that
+had only ever been asserted: with the adjudicator unreachable on fifteen of
+sixteen lines, `data/primary` returned 94/100 at 0.00% false match — identical
+to the deterministic row. The rung is strictly additive under a real outage, not
+merely by design.
 
 ---
 

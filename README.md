@@ -231,9 +231,14 @@ to it. Measured, on the residual and with the real scorer:
 The ceiling is reached **while still abstaining** on the four primary
 `AMBIGUOUS_REFUND` cases, whose refunds are unallocated in the answer key — a
 reader that claimed those would score below the ceiling, not above it. So the
-achievable band on primary is **94 to 100**, and where a real model lands inside
-it is an empirical question this repo answers by running the command, not by
-asserting it.
+achievable band on primary is **94 to 100**.
+
+A live model has landed inside the dev band once: `liquid/lfm-2.5-2.6b:free`
+took dev from 90/100 to **96/100** on 15 claims the answer key agreed with **15
+of 15**, at a **0.00% false-match rate**. One model, one run, and `data/primary`
+still has no live number — the protocol, the numbers and the caveats are in
+[`docs/LIVE_MODEL.md`](docs/LIVE_MODEL.md). Every figure in the table above is
+still the declining reader, which is what CI runs.
 
 Five properties are structural rather than promised, and each has a test:
 
