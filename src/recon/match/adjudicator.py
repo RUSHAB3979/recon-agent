@@ -96,6 +96,7 @@ __all__ = [
     "Candidate",
     "DecliningReader",
     "EvidenceReader",
+    "OpenRouterReader",
     "ScriptedReader",
     "Usage",
     "build_request",
@@ -113,6 +114,11 @@ PRICING: Mapping[str, tuple[Decimal, Decimal]] = {
 }
 
 DEFAULT_MODEL = "claude-haiku-4-5-20251001"
+
+# OpenRouter names models by provider/slug. Haiku for the same reason as above:
+# this is a two-way reading-comprehension question over one sentence, and paying
+# frontier rates for it would be a cost-metric own-goal.
+DEFAULT_OPENROUTER_MODEL = "anthropic/claude-haiku-4.5"
 
 # Below this, a stated preference is recorded as a decline. It is a declared
 # policy rather than a fitted threshold, and it is tuned -- if at all -- against
@@ -500,18 +506,195 @@ def _extract_json(response: object) -> dict[str, object] | None:
     return None
 
 
+class OpenRouterReader:
+    """Reads the note through OpenRouter's OpenAI-compatible chat API.
+
+    THE POINT OF THIS CLASS IS THAT IT IS BORING
+
+        ``EvidenceReader`` is a one-method protocol and the module docstring
+        already claimed that a different mechanism could serve behind it -- "an
+        embedding model, a classifier, or a maintained product-to-category map
+        could each plausibly serve here; they would implement this same
+        protocol". This is that claim being cashed rather than repeated: a
+        second provider, on a different wire format, with no change to the rung,
+        the gates, the prompt, the closed-list guard, the confidence floor or
+        the scorer. If adding it had required touching any of those, the
+        protocol would have been decoration.
+
+    STDLIB ONLY
+
+        ``urllib.request`` rather than the ``openai`` package. This repository
+        takes exactly two dependencies and both earn their place; an HTTP POST
+        with a JSON body does not need a third. It also keeps the failure modes
+        visible in this file instead of inside a client library.
+
+    THE SAFETY PROPERTIES ARE THE RUNG'S, NOT THE READER'S
+
+        A reader cannot widen what the model is allowed to do. It returns a
+        label and a confidence; :class:`AdjudicationPass` discards a label
+        outside the shortlist and records a sub-floor confidence as a decline.
+        So a new provider cannot introduce a new way to be wrong about money --
+        only a new way to be unhelpful, which costs an abstention.
+    """
+
+    ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
+
+    def __init__(
+        self,
+        *,
+        model: str = DEFAULT_OPENROUTER_MODEL,
+        api_key: str | None = None,
+        timeout: float = 30.0,
+        endpoint: str | None = None,
+        opener: object | None = None,
+    ) -> None:
+        key = api_key or os.environ.get("OPENROUTER_API_KEY")
+        if not key:
+            raise ValueError("OPENROUTER_API_KEY is not set")
+        self._key = key
+        self.model = model
+        self._timeout = timeout
+        self._endpoint = endpoint or self.ENDPOINT
+        # Injected in tests so the transport can be exercised without a network
+        # call. Production passes nothing and gets urllib.
+        self._opener = opener
+
+    def read(self, request: AdjudicationRequest) -> Adjudication:
+        try:
+            payload = self._call(request)
+        except Exception as error:
+            # Same policy as the Anthropic reader: a line the network ate is a
+            # line for a human. Declining keeps it visible in the exception
+            # queue instead of turning it into a silent gap in the batch.
+            return Adjudication(
+                detail_id=request.detail_id,
+                label=None,
+                confidence=0.0,
+                reasoning=f"adjudicator unreachable ({type(error).__name__}); routed to human review",
+                model=self.model,
+                usage=Usage(calls=1),
+            )
+        return self._to_adjudication(request, payload)
+
+    def _call(self, request: AdjudicationRequest) -> dict[str, object]:
+        import urllib.request
+
+        body = json.dumps(
+            {
+                "model": self.model,
+                "messages": [
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": render_request(request)},
+                ],
+                "temperature": 0,
+                "max_tokens": 512,
+                "response_format": {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "adjudication",
+                        "strict": True,
+                        "schema": dict(RESPONSE_SCHEMA),
+                    },
+                },
+            }
+        ).encode("utf-8")
+
+        http = urllib.request.Request(
+            self._endpoint,
+            data=body,
+            headers={
+                "Authorization": f"Bearer {self._key}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        opener = self._opener or urllib.request.urlopen
+        with opener(http, timeout=self._timeout) as response:  # type: ignore[operator]
+            return json.loads(response.read().decode("utf-8"))
+
+    def _to_adjudication(
+        self, request: AdjudicationRequest, payload: Mapping[str, object]
+    ) -> Adjudication:
+        usage_block = payload.get("usage") or {}
+        usage = Usage(
+            input_tokens=int(usage_block.get("prompt_tokens", 0) or 0),
+            output_tokens=int(usage_block.get("completion_tokens", 0) or 0),
+            calls=1,
+        )
+
+        verdict = _openrouter_verdict(payload)
+        if verdict is None:
+            return Adjudication(
+                detail_id=request.detail_id,
+                label=None,
+                confidence=0.0,
+                reasoning="model returned no parseable verdict; declined",
+                model=self.model,
+                usage=usage,
+            )
+
+        label = verdict.get("label")
+        confidence = verdict.get("confidence", 0.0)
+        return Adjudication(
+            detail_id=request.detail_id,
+            label=label if isinstance(label, str) else None,
+            confidence=float(confidence) if isinstance(confidence, (int, float)) else 0.0,
+            reasoning=str(verdict.get("reasoning", "")),
+            model=self.model,
+            usage=usage,
+        )
+
+
+def _openrouter_verdict(payload: Mapping[str, object]) -> dict[str, object] | None:
+    """The verdict object out of a chat-completions body, or None.
+
+    Models behind OpenRouter differ in how faithfully they honour a JSON schema:
+    some return the object, some wrap it in a fenced code block. Both are
+    handled, and anything else declines rather than being coerced -- a parser
+    that tries hard enough to salvage a malformed answer eventually salvages one
+    that was never there.
+    """
+
+    choices = payload.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return None
+    message = choices[0].get("message") if isinstance(choices[0], dict) else None
+    content = message.get("content") if isinstance(message, dict) else None
+    if not isinstance(content, str):
+        return None
+
+    text = content.strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+    try:
+        parsed = json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
 def default_reader() -> EvidenceReader:
-    """An Anthropic reader when a key is configured, otherwise the null one.
+    """A live reader when a key is configured, otherwise the null one.
 
     Selection is by environment, not by flag, so that the same command produces
     the deterministic-only numbers on a machine with no key -- which is what CI
     runs, and therefore what the published figures are.
+
+    Anthropic first when both are set, because that is the reader the prompt was
+    written against; OpenRouter otherwise. A construction failure falls back to
+    declining rather than raising: a missing key or a broken client should cost
+    the residual, not the batch.
     """
 
     if os.environ.get("ANTHROPIC_API_KEY"):
         try:
             return AnthropicReader()
         except Exception:  # pragma: no cover - import or construction failure
+            return DecliningReader()
+    if os.environ.get("OPENROUTER_API_KEY"):
+        try:
+            return OpenRouterReader()
+        except Exception:  # pragma: no cover - construction failure
             return DecliningReader()
     return DecliningReader()
 

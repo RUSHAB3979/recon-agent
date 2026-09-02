@@ -127,8 +127,21 @@ number:
 python -m recon.match.controller data/dev --adjudicate
 ```
 
-With no `ANTHROPIC_API_KEY` set it selects the declining reader, so the command
-still runs — and still produces the deterministic result.
+With no key set it selects the declining reader, so the command still runs — and
+still produces the deterministic result. Two live readers ship: set
+`ANTHROPIC_API_KEY` for the Anthropic API, or `OPENROUTER_API_KEY` for
+OpenRouter. Selection is by environment rather than by flag, so CI — which has
+neither — measures the deterministic figures, which is what makes them the
+published ones.
+
+The OpenRouter reader is the injected-protocol claim being cashed rather than
+repeated: a second provider on a different wire format, stdlib `urllib` and no
+new dependency, with no change to the rung, the gates, the prompt, the
+closed-list guard, the confidence floor or the scorer. A reader cannot widen
+what the model may do — it returns a label and a confidence, and the rung
+discards a label outside the shortlist and records a sub-floor confidence as a
+decline. So a new provider cannot introduce a new way to be wrong about money,
+only a new way to be unhelpful, which costs an abstention.
 
 ## Architecture
 
