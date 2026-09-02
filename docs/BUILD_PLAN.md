@@ -515,7 +515,8 @@ deterministic ladder is certain or absent, and a rung supplying graded
 confidence makes the dial trade coverage for precision in the expected
 direction.
 
-Still outstanding: the demo surface. If a number disappoints it gets reported,
+The demo surface that this section left outstanding landed in Phase F; the
+holdout it anticipated landed with it. If a number disappoints it gets reported,
 not re-tuned.
 
 ---
