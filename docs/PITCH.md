@@ -194,4 +194,4 @@ the ones that land.
 | `data/` missing | `make data` — 3 seconds, and CI proves it regenerates byte-for-byte. |
 | Terminal too small | Beats 1 and 3 are the long ones. `--auto` won't help; shrink the font before starting. |
 | Badly over time | Cut screen 1 and open on screen 2 — say "B2, a slightly longer SQL script, scores 89 with 16 false matches" and carry on. |
-| Asked to prove it's live | Re-run any beat — each is under two seconds. `make verify` recomputes every published number across 876 tests, but it takes about a minute warm and longer cold, so offer it for after, not on the clock. |
+| Asked to prove it's live | Re-run any beat — each is under two seconds. `make verify` recomputes every published number across 883 tests, but it takes about a minute warm and longer cold, so offer it for after, not on the clock. |
