@@ -11,9 +11,9 @@ row. Every case contains 3–7 gateway event rows, so a 500-event batch contains
 
 | Family | Published use | Scenario shares |
 |---|---|---|
-| `development` | five 500-event seeds used to freeze thresholds | development |
-| `primary` | one 500-event headline, throughput, and demo batch | primary |
-| `stress` | ten pooled 500-event exception-enriched batches | stress |
+| `development` | committed 500-event batch, seed 42; development and tuning | development |
+| `primary` | committed 500-event batch, seed 20260905; headline and demo | primary |
+| `stress` | committed 500-event batch, seed 101; exception-enriched evaluation | stress |
 
 Development is the only family on which thresholds may be tuned. Primary and
 stress results are reported separately; averaging them would mix realistic and
@@ -223,9 +223,9 @@ ties.
 | `CORROBORATED_REFUND` | 10% | 6% | 10% | `RECONCILED` |
 | `FEE_TAX_VARIANCE` | 6% | 4% | 8% | `EXCEPTION` |
 | `CAPTURED_UNSETTLED` | 6% | 6% | 7% | `EXCEPTION` |
-| `BANK_CREDIT_MISSING` | 4% | — | 7% | `EXCEPTION` |
+| `BANK_CREDIT_MISSING` | 4% | 3% | 7% | `EXCEPTION` |
 | `AMBIGUOUS_REFUND` | 8% | 4% | 6% | `ABSTAIN` |
-| `BANK_CREDIT_DUPLICATE` | 3% | — | 5% | `EXCEPTION` |
+| `BANK_CREDIT_DUPLICATE` | 3% | 2% | 5% | `EXCEPTION` |
 | `NOT_SETTLEABLE` | 5% | 6% | 3% | `NO_ACTION` |
 
 Shares are apportioned deterministically by largest remainder. At exactly 100
@@ -307,7 +307,7 @@ refund line with a knowable answer, how often the top-ranked candidate is the
 right one, against the sum of 1/k expected from a k-sided coin. On the released
 data that lift is negative on all three families.
 
-## Honest limitation
+## Limitations
 
 The held-out set is a different seed from the same generator. It measures
 whether tolerances were overfitted. It does **not** measure robustness to real

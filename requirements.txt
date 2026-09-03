@@ -1,7 +1,5 @@
 pytest>=8.0
 
-# The evidence-reading rung. Optional at runtime: with no ANTHROPIC_API_KEY
-# the ladder falls back to a reader that declines every residual line, which
-# reproduces the published deterministic numbers exactly. It is pinned here so
-# CI installs the same surface the adjudicator was written against.
+# Optional at runtime; installed for the Anthropic reader and its tests.
+# Deterministic runs and the OpenRouter reader do not require a live API key.
 anthropic>=1.0.0,<2

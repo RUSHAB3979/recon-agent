@@ -117,7 +117,7 @@ $PY -m recon.metrics.dashboard data/primary --out runs/demo/index.html >/dev/nul
 
 clear 2>/dev/null || true
 bold "Multi-source Reconciliation Agent"
-dim  "Every number on the next four screens is computed live, now."
+dim  "Results are computed from the included synthetic datasets."
 hold
 
 # 1. The floor. Establish what a plain script already does, before claiming
@@ -146,7 +146,7 @@ beat "3b. One item, with the reason it is on the desk" \
      "$PY -c \"import csv,textwrap; r=next(csv.DictReader(open('runs/primary/exceptions.csv'))); print('case      ', r['case_id']); print('category  ', r['category']); print('exposure  ', r['exposure_rupees']); print('action    ', textwrap.fill(r['recommended_action'], 72, subsequent_indent='           ')); print('evidence  ', textwrap.fill(r['evidence'][:300], 72, subsequent_indent='           '))\""
 
 # 4. The holdout: seeds nothing in the repo had ever generated or scored.
-beat "4. Five seeds nobody had ever run" \
+beat "4. Reproducing the five-seed holdout result" \
      "$PY tools/holdout.py | tail -12"
 
 # 5. The artifact a human works.

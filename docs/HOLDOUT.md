@@ -1,25 +1,13 @@
-# The holdout run
+# Holdout evaluation
 
-Pre-registered in `tools/holdout.py`, committed before the run
-(`7f23a24 Declare the holdout protocol, before running it`). Executed once, on
-2026-09-01. Nothing in the engine changed afterwards, and the commit order is
-the evidence rather than the assurance.
+The protocol was committed in `7b7aa41` before the initial run on 1 September
+2026. It used five additional seeds (70001–70005), the primary scenario mix,
+and the deterministic ladder with the evidence reader disabled.
 
-## Protocol, as declared
+The initial evaluation was a single run. The seeds and runner are retained
+for reproduction; later executions are reruns of known data.
 
-| | |
-|---|---|
-| seeds | 70001–70005, a contiguous block, never generated or scored before |
-| family | `PRIMARY` — the realistic-prevalence mix that produces the headline |
-| ladder | frozen `DEFAULT_LADDER`; evidence-reading rung off |
-| runs | **one** |
-
-A guard in the runner refuses any seed appearing elsewhere in the repository
-(7, 8, 42, 99, 101, 2026, 20260905). A holdout seed already seen is a re-run
-wearing the name of a holdout, and that is the one way this measurement could
-have been wrong without looking wrong.
-
-## Result, verbatim
+## Recorded result
 
 ```
 holdout run  2026-09-01 04:22:23 UTC
@@ -37,47 +25,23 @@ holdout run  2026-09-01 04:22:23 UTC
   false-match rate   max 0.00%   allocation precision min 1.0000
 ```
 
-The held-out figure is **identical to the published primary figure**: 94/100,
-0.00% false matches, 1.0000 allocation precision. Nothing was fitted to the
-particular batches in `data/`.
+## Interpretation
 
-## What it does not show, and this matters more than the number
+All five batches scored 94/100 with no false matches. The fixed primary mix
+contains six `DESCRIBED_REFUND` cases in every 100-case batch, and the
+deterministic agent abstains on all six. The repeated 94/100 therefore follows
+from the scenario mix; it should not be treated as five independent estimates
+of production accuracy.
 
-**The headline was never free to move much, and a holdout that returns the same
-number five times is measuring less than it looks like it is measuring.**
+B2's difficulty floor varied from 8% to 13%, leaving the agent two to seven
+correct cases ahead. Allocation recall ranged from 0.9716 to 0.9719.
 
-`PRIMARY_CASE_SHARES` is a fixed partition of 100 cases, so every seed draws the
-same *count* per scenario — 6 `DESCRIBED_REFUND` cases, every time. The agent's
-per-class behaviour is deterministic: it closes every other class completely and
-abstains on all six `DESCRIBED_REFUND` cases, which is the designed residual the
-gates provably cannot separate. Checked on two of the five seeds after the run:
+These seeds come from the same generator as the committed data. They test
+behavior on additional generated batches, not compatibility with real bank
+data or unseen types of reconciliation failures.
 
-```
-70001 missed classes: {'DESCRIBED_REFUND': (0, 6)}
-70003 missed classes: {'DESCRIBED_REFUND': (0, 6)}
-```
+## Reproduce
 
-94 is therefore 100 − 6, by construction, on any seed. Reporting the constancy
-as though five independent draws had agreed would be reading a structural
-identity as evidence of stability.
-
-## What genuinely moved
-
-**D moved five points and the agent did not.** The difficulty floor against B2
-ranged from 8.0% to 13.0% across the five seeds — B2's guessing luck varies with
-the draw — while the agent's score, false-match rate and allocation precision
-did not vary at all. Allocation recall moved only in the fourth decimal
-(0.9716–0.9719).
-
-That is the cleanest statement of the difference the whole project is about:
-across five unseen batches, **all of the seed-to-seed variance sat in the
-guesser and none of it in the prover.** The honest headroom figure is therefore
-a range, +2 to +7 cases over B2, not the single number either family happens to
-show.
-
-## The limitation that does not go away here
-
-The holdout is a different seed from the same generator. It measures whether the
-tolerances were fitted to the batches in `data/`. It does **not** measure
-robustness to real bank data, because the same code wrote both the defects and
-their labels. This run must not be described as if it did.
+Run `make holdout` or, with `PYTHONPATH=src`, `python tools/holdout.py`.
+The runner rejects the development and previously reserved benchmark seeds.
+Rerunning this command does not create a new held-out evaluation.
